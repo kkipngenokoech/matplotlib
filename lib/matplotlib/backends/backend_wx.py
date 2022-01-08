@@ -1080,6 +1080,12 @@ class NavigationToolbar2Wx(NavigationToolbar2, wx.ToolBar):
         if "Zoom" in self.wx_ids:
             self.ToggleTool(self.wx_ids["Zoom"], self.mode.name == "ZOOM")
 
+    def _update_buttons_checked(self):
+        if "Pan" in self.wx_ids:
+            self.ToggleTool(self.wx_ids["Pan"], self.mode.name == "PAN")
+        if "Zoom" in self.wx_ids:
+            self.ToggleTool(self.wx_ids["Zoom"], self.mode.name == "ZOOM")
+
     def zoom(self, *args):
         super().zoom(*args)
         self._update_buttons_checked()
