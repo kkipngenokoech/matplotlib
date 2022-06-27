@@ -266,6 +266,8 @@ struct PyFT2Font
 
 static PyTypeObject PyFT2FontType;
 
+static PyTypeObject PyFT2FontType;
+
 static unsigned long read_from_file_callback(FT_Stream stream,
                                              unsigned long offset,
                                              unsigned char *buffer,
