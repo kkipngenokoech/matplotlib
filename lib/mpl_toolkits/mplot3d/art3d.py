@@ -733,7 +733,7 @@ class Path3DCollection(PathCollection):
             self._sizes = self._sizes3d[z_markers_idx]
 
         if len(self._linewidths3d) > 1:
-            self._linewidths = self._linewidths3d[z_markers_idx]
+            self._linewidths = np.array(self._linewidths3d)[z_markers_idx]
 
         PathCollection.set_offsets(self, np.column_stack((vxs, vys)))
 
