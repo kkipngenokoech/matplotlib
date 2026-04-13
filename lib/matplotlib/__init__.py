@@ -148,6 +148,45 @@ def __getattr__(name):
         else:  # Get the version from the _version.py setuptools_scm file.
             __version__ = _version.version
         return __version__
+    elif name == "version_info":
+        # Ensure __version__ is available first
+        version_str = __getattr__("__version__")
+        global version_info  # cache it.
+        # Parse version string into tuple of integers
+        # Handle formats like "3.5.2", "3.5.2.dev123+g1234567", "3.5.2rc1", etc.
+        import re
+        # Extract the main version numbers (major.minor.patch)
+        match = re.match(r'^(\d+)\.(\d+)\.(\d+)', version_str)
+        if match:
+            major, minor, patch = map(int, match.groups())
+            # Check for pre-release identifiers
+            remainder = version_str[match.end():]
+            if remainder:
+                # Check for alpha, beta, rc, dev, etc.
+                pre_match = re.match(r'(a|alpha|b|beta|rc|dev)(\d*)', remainder)
+                if pre_match:
+                    pre_type = pre_match.group(1)
+                    pre_num = int(pre_match.group(2)) if pre_match.group(2) else 0
+                    # Map pre-release types to standard names
+                    if pre_type in ('a', 'alpha'):
+                        pre_type = 'alpha'
+                    elif pre_type in ('b', 'beta'):
+                        pre_type = 'beta'
+                    elif pre_type == 'rc':
+                        pre_type = 'candidate'
+                    elif pre_type == 'dev':
+                        pre_type = 'dev'
+                    version_info = (major, minor, patch, pre_type, pre_num)
+                else:
+                    # Has remainder but no recognized pre-release pattern
+                    version_info = (major, minor, patch, 'final', 0)
+            else:
+                # No remainder, this is a final release
+                version_info = (major, minor, patch, 'final', 0)
+        else:
+            # Fallback if version doesn't match expected format
+            version_info = (0, 0, 0, 'unknown', 0)
+        return version_info
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
