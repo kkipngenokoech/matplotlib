@@ -903,7 +903,7 @@ class RangeSlider(SliderBase):
             xy[1] = .25, val[1]
             xy[2] = .75, val[1]
             xy[3] = .75, val[0]
-            xy[4] = .25, val[0]
+            # xy[4] = .25, val[0]  # Commented out to fix initialization issue
         else:
             xy[0] = val[0], .25
             xy[1] = val[0], .75
