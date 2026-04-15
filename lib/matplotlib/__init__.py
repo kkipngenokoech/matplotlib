@@ -148,6 +148,20 @@ def __getattr__(name):
         else:  # Get the version from the _version.py setuptools_scm file.
             __version__ = _version.version
         return __version__
+    elif name == "version_info":
+        # Parse __version__ to create a comparable tuple
+        version_str = __getattr__("__version__")
+        # Remove any non-numeric suffixes (like .dev, .post, etc.)
+        import re
+        match = re.match(r'(\d+)\.(\d+)\.(\d+)', version_str)
+        if match:
+            major, minor, micro = match.groups()
+            global version_info
+            version_info = (int(major), int(minor), int(micro))
+        else:
+            # Fallback for unexpected version formats
+            version_info = (0, 0, 0)
+        return version_info
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
