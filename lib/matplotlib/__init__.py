@@ -148,6 +148,27 @@ def __getattr__(name):
         else:  # Get the version from the _version.py setuptools_scm file.
             __version__ = _version.version
         return __version__
+    elif name == "version_info":
+        # Parse __version__ to create a comparable tuple
+        version_str = __getattr__("__version__")
+        # Remove any local version identifiers (e.g., +g1234567)
+        version_str = version_str.split("+")[0]
+        # Split on dots and convert to integers, handling pre-release suffixes
+        parts = []
+        for part in version_str.split("."):
+            # Handle cases like "3.5.0rc1" by splitting on non-digit characters
+            import re
+            match = re.match(r"(\d+)", part)
+            if match:
+                parts.append(int(match.group(1)))
+            else:
+                break
+        # Ensure we have at least 3 components (major, minor, patch)
+        while len(parts) < 3:
+            parts.append(0)
+        global version_info
+        version_info = tuple(parts)
+        return version_info
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
