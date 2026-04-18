@@ -261,6 +261,9 @@ alignment : {'center', 'left', 'right'}, default: 'center'
     The alignment of the legend title and the box of entries. The entries
     are aligned as a single block, so that markers always lined up.
 
+draggable : bool, default: False
+    Whether the legend can be dragged with the mouse.
+
 borderpad : float, default: :rc:`legend.borderpad`
     The fractional whitespace inside the legend border, in font-size units.
 
@@ -341,6 +344,7 @@ class Legend(Artist):
         handler_map=None,
         title_fontproperties=None,  # properties for the legend title
         alignment="center",       # control the alignment within the legend box
+        draggable=False,      # whether the legend can be dragged with the mouse
         *,
         ncol=1  # synonym for ncols (backward compatibility)
     ):
