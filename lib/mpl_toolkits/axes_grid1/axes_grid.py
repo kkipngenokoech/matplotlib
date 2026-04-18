@@ -13,8 +13,10 @@ from .mpl_axes import Axes
 def _tick_only(ax, bottom_on, left_on):
     bottom_off = not bottom_on
     left_off = not left_on
-    ax.axis["bottom"].toggle(ticklabels=bottom_off, label=bottom_off)
-    ax.axis["left"].toggle(ticklabels=left_off, label=left_off)
+    # Handle both subscriptable axis attributes and callable axis methods
+    axis = ax.axis() if callable(ax.axis) else ax.axis
+    axis["bottom"].toggle(ticklabels=bottom_off, label=bottom_off)
+    axis["left"].toggle(ticklabels=left_off, label=left_off)
 
 
 class CbarAxesBase:
