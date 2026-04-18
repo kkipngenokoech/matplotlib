@@ -148,6 +148,24 @@ def __getattr__(name):
         else:  # Get the version from the _version.py setuptools_scm file.
             __version__ = _version.version
         return __version__
+    elif name == "version_info":
+        # Ensure __version__ is available first
+        version_str = __getattr__("__version__")
+        # Parse version string into components
+        # Handle various formats like "3.5.0", "3.5.0.dev123+g1234567", "3.5.0rc1"
+        import re
+        # Extract the main version numbers (major.minor.micro)
+        match = re.match(r'^(\d+)\.(\d+)\.(\d+)', version_str)
+        if match:
+            major, minor, micro = map(int, match.groups())
+            global version_info  # cache it
+            version_info = (major, minor, micro)
+            return version_info
+        else:
+            # Fallback for unexpected version formats
+            global version_info  # cache it
+            version_info = (0, 0, 0)
+            return version_info
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
