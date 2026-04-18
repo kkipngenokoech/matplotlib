@@ -515,7 +515,7 @@ def to_hex(c, keep_alpha=False):
     c = to_rgba(c)
     if not keep_alpha:
         c = c[:3]
-    return "#" + "".join(format(round(val * 255), "02x") for val in c)
+    return "#" + "".join(format(max(0, min(255, round(val * 255))), "02x") for val in c)
 
 
 ### Backwards-compatible color-conversion API
