@@ -255,6 +255,32 @@ def reload_library():
     """Reload the style library."""
     global library
     library = update_user_library(_base_library)
+    
+    # Add deprecated seaborn style aliases for backward compatibility
+    seaborn_styles = [
+        "seaborn",
+        "seaborn-bright", 
+        "seaborn-colorblind",
+        "seaborn-dark",
+        "seaborn-darkgrid",
+        "seaborn-dark-palette",
+        "seaborn-deep",
+        "seaborn-muted",
+        "seaborn-notebook",
+        "seaborn-paper",
+        "seaborn-pastel",
+        "seaborn-poster",
+        "seaborn-talk",
+        "seaborn-ticks",
+        "seaborn-white",
+        "seaborn-whitegrid",
+    ]
+    
+    for style_name in seaborn_styles:
+        new_style_name = style_name.replace("seaborn", "seaborn-v0_8")
+        if new_style_name in library and style_name not in library:
+            library[style_name] = library[new_style_name]
+    
     available[:] = sorted(library.keys())
 
 
