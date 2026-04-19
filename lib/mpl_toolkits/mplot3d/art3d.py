@@ -174,6 +174,9 @@ class Line3D(lines.Line2D):
         zs = cbook._to_unmasked_float_array(zs).ravel()
         zs = np.broadcast_to(zs, len(xs))
         self._verts3d = juggle_axes(xs, ys, zs, zdir)
+        # Ensure _verts3d is properly set
+        if not hasattr(self, '_verts3d') or self._verts3d is None:
+            self._verts3d = juggle_axes(xs, ys, zs, zdir)
         self.stale = True
 
     def set_data_3d(self, *args):
@@ -212,6 +215,19 @@ class Line3D(lines.Line2D):
 
     @artist.allow_rasterization
     def draw(self, renderer):
+        # Ensure _verts3d exists before using it
+        if not hasattr(self, '_verts3d') or self._verts3d is None:
+            # If _verts3d is missing, try to reconstruct it from existing data
+            xs = self.get_xdata()
+            ys = self.get_ydata()
+            if len(xs) > 0 and len(ys) > 0:
+                # Default to z=0 if no 3D data available
+                zs = np.zeros_like(xs)
+                self._verts3d = xs, ys, zs
+            else:
+                # If no data at all, create empty arrays
+                self._verts3d = np.array([]), np.array([]), np.array([])
+        
         xs3d, ys3d, zs3d = self._verts3d
         xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, self.axes.M)
         self.set_data(xs, ys)
