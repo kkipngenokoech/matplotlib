@@ -1175,6 +1175,8 @@ def get_backend():
     --------
     matplotlib.use
     """
+    # Avoid triggering backend switching that could clear figures
+    # Just return the current backend name without side effects
     return rcParams['backend']
 
 
