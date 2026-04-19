@@ -1179,7 +1179,19 @@ def get_backend():
     --------
     matplotlib.use
     """
-    return rcParams['backend']
+    # Preserve the current state of Gcf.figs to avoid clearing figures
+    # that were created under rc_context when accessing rcParams
+    from matplotlib._pylab_helpers import Gcf
+    current_figs = dict(Gcf.figs)  # Make a copy to preserve state
+    
+    backend = rcParams['backend']
+    
+    # Restore any figures that might have been cleared
+    # This can happen when rcParams access triggers backend initialization
+    if len(Gcf.figs) < len(current_figs):
+        Gcf.figs.update(current_figs)
+    
+    return backend
 
 
 def interactive(b):
