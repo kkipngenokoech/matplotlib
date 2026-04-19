@@ -106,9 +106,9 @@ from packaging.version import parse as parse_version
 
 # cbook must import matplotlib only within function
 # definitions, so it is safe to import from it here.
-from . import _api, _version, cbook, docstring, rcsetup
-from matplotlib.cbook import MatplotlibDeprecationWarning, sanitize_sequence
-from matplotlib.cbook import mplDeprecation  # deprecated
+from . import _api, _version, cbook, _docstring, rcsetup
+from matplotlib.cbook import sanitize_sequence
+from matplotlib._api import MatplotlibDeprecationWarning
 from matplotlib.rcsetup import validate_backend, cycler
 
 
@@ -129,26 +129,61 @@ __bibtex__ = r"""@Article{Hunter:2007,
   year      = 2007
 }"""
 
+# modelled after sys.version_info
+_VersionInfo = namedtuple('_VersionInfo',
+                          'major, minor, micro, releaselevel, serial')
 
-def __getattr__(name):
-    if name == "__version__":
+
+def _parse_to_version_info(version_str):
+    """
+    Parse a version string to a namedtuple analogous to sys.version_info.
+
+    See:
+    https://packaging.pypa.io/en/latest/version.html#packaging.version.parse
+    https://docs.python.org/3/library/sys.html#sys.version_info
+    """
+    v = parse_version(version_str)
+    if v.pre is None and v.post is None and v.dev is None:
+        return _VersionInfo(v.major, v.minor, v.micro, 'final', 0)
+    elif v.dev is not None:
+        return _VersionInfo(v.major, v.minor, v.micro, 'alpha', v.dev)
+    elif v.pre is not None:
+        releaselevel = {
+            'a': 'alpha',
+            'b': 'beta',
+            'rc': 'candidate'}.get(v.pre[0], 'alpha')
+        return _VersionInfo(v.major, v.minor, v.micro, releaselevel, v.pre[1])
+    else:
+        # fallback for v.post: guess-next-dev scheme from setuptools_scm
+        return _VersionInfo(v.major, v.minor, v.micro + 1, 'alpha', v.post)
+
+
+def _get_version():
+    """Return the version string used for __version__."""
+    # Only shell out to a git subprocess if really needed, and not on a
+    # shallow clone, such as those used by CI, as the latter would trigger
+    # a warning from setuptools_scm.
+    root = Path(__file__).resolve().parents[2]
+    if (root / ".git").exists() and not (root / ".git/shallow").exists():
         import setuptools_scm
-        global __version__  # cache it.
-        # Only shell out to a git subprocess if really needed, and not on a
-        # shallow clone, such as those used by CI, as the latter would trigger
-        # a warning from setuptools_scm.
-        root = Path(__file__).resolve().parents[2]
-        if (root / ".git").exists() and not (root / ".git/shallow").exists():
-            __version__ = setuptools_scm.get_version(
-                root=root,
-                version_scheme="post-release",
-                local_scheme="node-and-date",
-                fallback_version=_version.version,
-            )
-        else:  # Get the version from the _version.py setuptools_scm file.
-            __version__ = _version.version
-        return __version__
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        return setuptools_scm.get_version(
+            root=root,
+            version_scheme="release-branch-semver",
+            local_scheme="node-and-date",
+            fallback_version=_version.version,
+        )
+    else:  # Get the version from the _version.py setuptools_scm file.
+        return _version.version
+
+
+@_api.caching_module_getattr
+class __getattr__:
+    __version__ = property(lambda self: _get_version())
+    __version_info__ = property(
+        lambda self: _parse_to_version_info(self.__version__))
+    # module-level deprecations
+    URL_REGEX = _api.deprecated("3.5", obj_type="")(property(
+        lambda self: re.compile(r'^http://|^https://|^ftp://|^file:')))
 
 
 def _check_versions():
@@ -161,7 +196,7 @@ def _check_versions():
             ("cycler", "0.10"),
             ("dateutil", "2.7"),
             ("kiwisolver", "1.0.1"),
-            ("numpy", "1.17"),
+            ("numpy", "1.19"),
             ("pyparsing", "2.2.1"),
     ]:
         module = importlib.import_module(modname)
@@ -243,7 +278,7 @@ def _logged_cached(fmt, func=None):
     return wrapper
 
 
-_ExecInfo = namedtuple("_ExecInfo", "executable version")
+_ExecInfo = namedtuple("_ExecInfo", "executable raw_version version")
 
 
 class ExecutableNotFoundError(FileNotFoundError):
@@ -267,8 +302,8 @@ def _get_executable_info(name):
     ----------
     name : str
         The executable to query.  The following values are currently supported:
-        "dvipng", "gs", "inkscape", "magick", "pdftops".  This list is subject
-        to change without notice.
+        "dvipng", "gs", "inkscape", "magick", "pdftocairo", "pdftops".  This
+        list is subject to change without notice.
 
     Returns
     -------
@@ -280,7 +315,10 @@ def _get_executable_info(name):
     ------
     ExecutableNotFoundError
         If the executable is not found or older than the oldest version
-        supported by Matplotlib.
+        supported by Matplotlib.  For debugging purposes, it is also
+        possible to "hide" an executable from Matplotlib by adding it to the
+        :envvar:`_MPLHIDEEXECUTABLES` environment variable (a comma-separated
+        list), which must be set prior to any calls to this function.
     ValueError
         If the executable is not one that we know how to query.
     """
@@ -304,16 +342,20 @@ def _get_executable_info(name):
             raise ExecutableNotFoundError(str(_ose)) from _ose
         match = re.search(regex, output)
         if match:
-            version = parse_version(match.group(1))
+            raw_version = match.group(1)
+            version = parse_version(raw_version)
             if min_ver is not None and version < parse_version(min_ver):
                 raise ExecutableNotFoundError(
                     f"You have {args[0]} version {version} but the minimum "
                     f"version supported by Matplotlib is {min_ver}")
-            return _ExecInfo(args[0], version)
+            return _ExecInfo(args[0], raw_version, version)
         else:
             raise ExecutableNotFoundError(
                 f"Failed to determine the version of {args[0]} from "
                 f"{' '.join(args)}, which output {output}")
+
+    if name in os.environ.get("_MPLHIDEEXECUTABLES", "").split(","):
+        raise ExecutableNotFoundError(f"{name} was hidden")
 
     if name == "dvipng":
         return impl(["dvipng", "-version"], "(?m)^dvipng(?: .*)? (.+)", "1.6")
@@ -366,11 +408,13 @@ def _get_executable_info(name):
         else:
             path = "convert"
         info = impl([path, "--version"], r"^Version: ImageMagick (\S*)")
-        if info.version == parse_version("7.0.10-34"):
+        if info.raw_version == "7.0.10-34":
             # https://github.com/ImageMagick/ImageMagick/issues/2720
             raise ExecutableNotFoundError(
                 f"You have ImageMagick {info.version}, which is unsupported")
         return info
+    elif name == "pdftocairo":
+        return impl(["pdftocairo", "-v"], "pdftocairo version (.*)")
     elif name == "pdftops":
         info = impl(["pdftops", "-v"], "^pdftops version (.*)",
                     ignore_exit_code=True)
@@ -410,7 +454,7 @@ def _get_xdg_config_dir():
     Return the XDG configuration directory, according to the XDG base
     directory spec:
 
-    https://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
+    https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
     """
     return os.environ.get('XDG_CONFIG_HOME') or str(Path.home() / ".config")
 
@@ -419,7 +463,7 @@ def _get_xdg_cache_dir():
     """
     Return the XDG cache directory, according to the XDG base directory spec:
 
-    https://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
+    https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
     """
     return os.environ.get('XDG_CACHE_HOME') or str(Path.home() / ".cache")
 
@@ -540,27 +584,18 @@ def matplotlib_fname():
 # rcParams deprecated and automatically mapped to another key.
 # Values are tuples of (version, new_name, f_old2new, f_new2old).
 _deprecated_map = {}
-
 # rcParams deprecated; some can manually be mapped to another key.
 # Values are tuples of (version, new_name_or_None).
-_deprecated_ignore_map = {
-    'mpl_toolkits.legacy_colorbar': ('3.4', None),
-}
-
+_deprecated_ignore_map = {}
 # rcParams deprecated; can use None to suppress warnings; remain actually
-# listed in the rcParams (not included in _all_deprecated).
+# listed in the rcParams.
 # Values are tuples of (version,)
-_deprecated_remain_as_none = {
-    'animation.avconv_path': ('3.3',),
-    'animation.avconv_args': ('3.3',),
-    'animation.html_args': ('3.3',),
-}
+_deprecated_remain_as_none = {}
 
 
-_all_deprecated = {*_deprecated_map, *_deprecated_ignore_map}
-
-
-@docstring.Substitution("\n".join(map("- {}".format, rcsetup._validators)))
+@_docstring.Substitution(
+    "\n".join(map("- {}".format, sorted(rcsetup._validators, key=str.lower)))
+)
 class RcParams(MutableMapping, dict):
     """
     A dictionary object including validation.
@@ -626,7 +661,9 @@ class RcParams(MutableMapping, dict):
                 version, name=key, obj_type="rcparam", alternative=alt_key)
             return dict.__getitem__(self, alt_key) if alt_key else None
 
-        elif key == "backend":
+        # In theory, this should only ever be used after the global rcParams
+        # has been set up, but better be safe e.g. in presence of breakpoints.
+        elif key == "backend" and self is globals().get("rcParams"):
             val = dict.__getitem__(self, key)
             if val is rcsetup._auto_backend_sentinel:
                 from matplotlib import pyplot as plt
@@ -671,7 +708,10 @@ class RcParams(MutableMapping, dict):
                         if pattern_re.search(key))
 
     def copy(self):
-        return {k: dict.__getitem__(self, k) for k in self}
+        rccopy = RcParams()
+        for k in self:  # Skip deprecations and revalidation.
+            dict.__setitem__(rccopy, k, dict.__getitem__(self, k))
+        return rccopy
 
 
 def rc_params(fail_on_error=False):
@@ -679,14 +719,10 @@ def rc_params(fail_on_error=False):
     return rc_params_from_file(matplotlib_fname(), fail_on_error)
 
 
-# Deprecated in Matplotlib 3.5.
-URL_REGEX = re.compile(r'^http://|^https://|^ftp://|^file:')
-
-
 @_api.deprecated("3.5")
 def is_url(filename):
     """Return whether *filename* is an http, https, ftp, or file URL path."""
-    return URL_REGEX.match(filename) is not None
+    return __getattr__("URL_REGEX").match(filename) is not None
 
 
 @functools.lru_cache()
@@ -744,7 +780,7 @@ def _rc_params_in_file(fname, transform=lambda x: x, fail_on_error=False):
         try:
             for line_no, line in enumerate(fd, 1):
                 line = transform(line)
-                strippedline = line.split('#', 1)[0].strip()
+                strippedline = cbook._strip_comment(line)
                 if not strippedline:
                     continue
                 tup = strippedline.split(':', 1)
@@ -755,6 +791,8 @@ def _rc_params_in_file(fname, transform=lambda x: x, fail_on_error=False):
                 key, val = tup
                 key = key.strip()
                 val = val.strip()
+                if val.startswith('"') and val.endswith('"'):
+                    val = val[1:-1]  # strip double quotes
                 if key in rc_temp:
                     _log.warning('Duplicate key in file %r, line %d (%r)',
                                  fname, line_no, line.rstrip('\n'))
@@ -787,7 +825,7 @@ def _rc_params_in_file(fname, transform=lambda x: x, fail_on_error=False):
         else:
             # __version__ must be looked up as an attribute to trigger the
             # module-level __getattr__.
-            version = ('master' if '.post' in mpl.__version__
+            version = ('main' if '.post' in mpl.__version__
                        else f'v{mpl.__version__}')
             _log.warning("""
 Bad key %(key)s in file %(fname)s, line %(line_no)s (%(line)r)
@@ -853,8 +891,8 @@ dict.setdefault(rcParamsDefault, "backend", rcsetup._auto_backend_sentinel)
 rcParams = RcParams()  # The global instance.
 dict.update(rcParams, dict.items(rcParamsDefault))
 dict.update(rcParams, _rc_params_in_file(matplotlib_fname()))
+rcParamsOrig = rcParams.copy()
 with _api.suppress_matplotlib_deprecation_warning():
-    rcParamsOrig = RcParams(rcParams.copy())
     # This also checks that all rcParams are indeed listed in the template.
     # Assigning to rcsetup.defaultParams is left only for backcompat.
     defaultParams = rcsetup.defaultParams = {
@@ -1065,9 +1103,8 @@ def use(backend, *, force=True):
         backend names, which are case-insensitive:
 
         - interactive backends:
-          GTK3Agg, GTK3Cairo, MacOSX, nbAgg,
-          Qt5Agg, Qt5Cairo,
-          TkAgg, TkCairo, WebAgg, WX, WXAgg, WXCairo
+          GTK3Agg, GTK3Cairo, GTK4Agg, GTK4Cairo, MacOSX, nbAgg, QtAgg,
+          QtCairo, TkAgg, TkCairo, WebAgg, WX, WXAgg, WXCairo, Qt5Agg, Qt5Cairo
 
         - non-interactive backends:
           agg, cairo, pdf, pgf, ps, svg, template
@@ -1172,13 +1209,14 @@ def _init_tests():
         _log.warning(
             f"Matplotlib is not built with the correct FreeType version to "
             f"run tests.  Rebuild without setting system_freetype=1 in "
-            f"setup.cfg.  Expect many image comparison failures below.  "
+            f"mplsetup.cfg.  Expect many image comparison failures below.  "
             f"Expected freetype version {LOCAL_FREETYPE_VERSION}.  "
             f"Found freetype version {ft2font.__freetype_version__}.  "
             "Freetype build type is {}local".format(
                 "" if ft2font.__freetype_build_type__ == 'local' else "not "))
 
 
+@_api.deprecated("3.5", alternative='pytest')
 def test(verbosity=None, coverage=False, **kwargs):
     """Run the matplotlib test suite."""
 
@@ -1193,7 +1231,6 @@ def test(verbosity=None, coverage=False, **kwargs):
         return -1
 
     old_backend = get_backend()
-    old_recursionlimit = sys.getrecursionlimit()
     try:
         use('agg')
 
@@ -1409,4 +1446,8 @@ def _preprocess_data(func=None, *, replace_names=None, label_namer=None):
 
 _log.debug('interactive is %s', is_interactive())
 _log.debug('platform is %s', sys.platform)
-_log.debug('loaded modules: %s', list(sys.modules))
+
+
+# workaround: we must defer colormaps import to after loading rcParams, because
+# colormap creation depends on rcParams
+from matplotlib.cm import _colormaps as colormaps

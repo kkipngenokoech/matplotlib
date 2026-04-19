@@ -3,7 +3,8 @@
 
 """
 `matplotlib.pyplot` is a state-based interface to matplotlib. It provides
-a MATLAB-like way of plotting.
+an implicit,  MATLAB-like, way of plotting.  It also opens figures on your
+screen, and acts as the figure GUI manager.
 
 pyplot is mainly intended for interactive plots and simple cases of
 programmatic plot generation::
@@ -15,7 +16,19 @@ programmatic plot generation::
     y = np.sin(x)
     plt.plot(x, y)
 
-The object-oriented API is recommended for more complex plots.
+The explicit (object-oriented) API is recommended for complex plots, though
+pyplot is still usually used to create the figure and often the axes in the
+figure. See `.pyplot.figure`, `.pyplot.subplots`, and
+`.pyplot.subplot_mosaic` to create figures, and
+:doc:`Axes API <../axes_api>` for the plotting methods on an Axes::
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    x = np.arange(0, 5, 0.1)
+    y = np.sin(x)
+    fig, ax = plt.subplots()
+    ax.plot(x, y)
 """
 
 import functools
@@ -39,7 +52,7 @@ from matplotlib import _api
 from matplotlib import rcsetup, style
 from matplotlib import _pylab_helpers, interactive
 from matplotlib import cbook
-from matplotlib import docstring
+from matplotlib import _docstring
 from matplotlib.backend_bases import FigureCanvasBase, MouseButton
 from matplotlib.figure import Figure, figaspect
 from matplotlib.gridspec import GridSpec, SubplotSpec
@@ -52,7 +65,7 @@ from matplotlib import mlab  # for detrend_none, window_hanning
 from matplotlib.scale import get_scale_names
 
 from matplotlib import cm
-from matplotlib.cm import get_cmap, register_cmap
+from matplotlib.cm import _colormaps as colormaps, get_cmap, register_cmap
 
 import numpy as np
 
@@ -61,7 +74,7 @@ from matplotlib.colors import Normalize
 from matplotlib.lines import Line2D
 from matplotlib.text import Text, Annotation
 from matplotlib.patches import Polygon, Rectangle, Circle, Arrow
-from matplotlib.widgets import SubplotTool, Button, Slider, Widget
+from matplotlib.widgets import Button, Slider, Widget
 
 from .ticker import (
     TickHelper, Formatter, FixedFormatter, NullFormatter, FuncFormatter,
@@ -72,30 +85,17 @@ from .ticker import (
 _log = logging.getLogger(__name__)
 
 
-_code_objs = {
-    _api.rename_parameter:
-        _api.rename_parameter("", "old", "new", lambda new: None).__code__,
-    _api.make_keyword_only:
-        _api.make_keyword_only("", "p", lambda p: None).__code__,
-}
-
-
 def _copy_docstring_and_deprecators(method, func=None):
     if func is None:
         return functools.partial(_copy_docstring_and_deprecators, method)
-    decorators = [docstring.copy(method)]
+    decorators = [_docstring.copy(method)]
     # Check whether the definition of *method* includes @_api.rename_parameter
     # or @_api.make_keyword_only decorators; if so, propagate them to the
     # pyplot wrapper as well.
     while getattr(method, "__wrapped__", None) is not None:
-        for decorator_maker, code in _code_objs.items():
-            if method.__code__ is code:
-                kwargs = {
-                    k: v.cell_contents
-                    for k, v in zip(code.co_freevars, method.__closure__)}
-                assert kwargs["func"] is method.__wrapped__
-                kwargs.pop("func")
-                decorators.append(decorator_maker(**kwargs))
+        decorator = _api.deprecation.DECORATORS.get(method)
+        if decorator:
+            decorators.append(decorator)
         method = method.__wrapped__
     for decorator in decorators[::-1]:
         func = decorator(func)
@@ -103,7 +103,6 @@ def _copy_docstring_and_deprecators(method, func=None):
 
 
 ## Global ##
-
 
 _IP_REGISTERED = None
 _INSTALL_FIG_OBSERVER = False
@@ -199,8 +198,35 @@ def findobj(o=None, match=None, include_self=True):
 
 
 def _get_required_interactive_framework(backend_mod):
-    return getattr(
-        backend_mod.FigureCanvas, "required_interactive_framework", None)
+    if not hasattr(backend_mod.FigureCanvas, "required_interactive_framework"):
+        _api.warn_deprecated(
+            "3.6", name="Support for FigureCanvases without a "
+            "required_interactive_framework attribute")
+        return None
+    # Inline this once the deprecation elapses.
+    return backend_mod.FigureCanvas.required_interactive_framework
+
+_backend_mod = None
+
+
+def _get_backend_mod():
+    """
+    Ensure that a backend is selected and return it.
+
+    This is currently private, but may be made public in the future.
+    """
+    if _backend_mod is None:
+        # Use __getitem__ here to avoid going through the fallback logic (which
+        # will (re)import pyplot and then call switch_backend if we need to
+        # resolve the auto sentinel)
+        switch_backend(dict.__getitem__(rcParams, "backend"))
+        # Just to be safe.  Interactive mode can be turned on without calling
+        # `plt.ion()` so register it again here.  This is safe because multiple
+        # calls to `install_repl_displayhook` are no-ops and the registered
+        # function respects `mpl.is_interactive()` to determine if it should
+        # trigger a draw.
+        install_repl_displayhook()
+    return _backend_mod
 
 
 def switch_backend(newbackend):
@@ -223,8 +249,9 @@ def switch_backend(newbackend):
 
     if newbackend is rcsetup._auto_backend_sentinel:
         current_framework = cbook._get_running_interactive_framework()
-        mapping = {'qt5': 'qt5agg',
+        mapping = {'qt': 'qtagg',
                    'gtk3': 'gtk3agg',
+                   'gtk4': 'gtk4agg',
                    'wx': 'wxagg',
                    'tk': 'tkagg',
                    'macosx': 'macosx',
@@ -235,7 +262,8 @@ def switch_backend(newbackend):
             candidates = [best_guess]
         else:
             candidates = []
-        candidates += ["macosx", "qt5agg", "gtk3agg", "tkagg", "wxagg"]
+        candidates += [
+            "macosx", "qtagg", "gtk4agg", "gtk3agg", "tkagg", "wxagg"]
 
         # Don't try to fallback on the cairo-based backends as they each have
         # an additional dependency (pycairo) over the agg-based backend, and
@@ -290,7 +318,7 @@ def switch_backend(newbackend):
 
 
 def _warn_if_gui_out_of_main_thread():
-    if (_get_required_interactive_framework(_backend_mod)
+    if (_get_required_interactive_framework(_get_backend_mod())
             and threading.current_thread() is not threading.main_thread()):
         _api.warn_external(
             "Starting a Matplotlib GUI outside of the main thread will likely "
@@ -301,7 +329,7 @@ def _warn_if_gui_out_of_main_thread():
 def new_figure_manager(*args, **kwargs):
     """Create a new figure manager instance."""
     _warn_if_gui_out_of_main_thread()
-    return _backend_mod.new_figure_manager(*args, **kwargs)
+    return _get_backend_mod().new_figure_manager(*args, **kwargs)
 
 
 # This function's signature is rewritten upon backend-load by switch_backend.
@@ -314,7 +342,7 @@ def draw_if_interactive(*args, **kwargs):
         End users will typically not have to call this function because the
         the interactive mode takes care of this.
     """
-    return _backend_mod.draw_if_interactive(*args, **kwargs)
+    return _get_backend_mod().draw_if_interactive(*args, **kwargs)
 
 
 # This function's signature is rewritten upon backend-load by switch_backend.
@@ -363,7 +391,7 @@ def show(*args, **kwargs):
     explicitly there.
     """
     _warn_if_gui_out_of_main_thread()
-    return _backend_mod.show(*args, **kwargs)
+    return _get_backend_mod().show(*args, **kwargs)
 
 
 def isinteractive():
@@ -660,6 +688,7 @@ class _xkcd:
 
 ## Figures ##
 
+@_api.make_keyword_only("3.6", "facecolor")
 def figure(num=None,  # autoincrement if None, else integer from 1-N
            figsize=None,  # defaults to rc figure.figsize
            dpi=None,  # defaults to rc figure.dpi
@@ -705,40 +734,32 @@ def figure(num=None,  # autoincrement if None, else integer from 1-N
         If False, suppress drawing the figure frame.
 
     FigureClass : subclass of `~matplotlib.figure.Figure`
-        Optionally use a custom `.Figure` instance.
+        If set, an instance of this subclass will be created, rather than a
+        plain `.Figure`.
 
     clear : bool, default: False
         If True and the figure already exists, then it is cleared.
 
-    tight_layout : bool or dict, default: :rc:`figure.autolayout`
-        If ``False`` use *subplotpars*. If ``True`` adjust subplot
-        parameters using `.tight_layout` with default padding.
-        When providing a dict containing the keys ``pad``, ``w_pad``,
-        ``h_pad``, and ``rect``, the default `.tight_layout` paddings
-        will be overridden.
+    layout : {'constrained', 'tight', `.LayoutEngine`, None}, default: None
+        The layout mechanism for positioning of plot elements to avoid
+        overlapping Axes decorations (labels, ticks, etc). Note that layout
+        managers can measurably slow down figure display. Defaults to *None*
+        (but see the documentation of the `.Figure` constructor regarding the
+        interaction with rcParams).
 
-    constrained_layout : bool, default: :rc:`figure.constrained_layout.use`
-        If ``True`` use constrained layout to adjust positioning of plot
-        elements.  Like ``tight_layout``, but designed to be more
-        flexible.  See
-        :doc:`/tutorials/intermediate/constrainedlayout_guide`
-        for examples.  (Note: does not work with `add_subplot` or
-        `~.pyplot.subplot2grid`.)
-
-
-    **kwargs : optional
-        See `~.matplotlib.figure.Figure` for other possible arguments.
+    **kwargs
+        Additional keyword arguments are passed to the `.Figure` constructor.
 
     Returns
     -------
     `~matplotlib.figure.Figure`
-        The `.Figure` instance returned will also be passed to
-        new_figure_manager in the backends, which allows to hook custom
-        `.Figure` classes into the pyplot interface. Additional kwargs will be
-        passed to the `.Figure` init function.
 
     Notes
     -----
+    Newly created figures will be passed to the
+    `~.backend_template.new_figure_manager` function provided by the current
+    backend, which will install a canvas and a manager on the figure.
+
     If you are creating many figures, make sure you explicitly call
     `.pyplot.close` on the figures you are not using, because this will
     enable pyplot to properly clean up the memory.
@@ -832,8 +853,10 @@ def gcf():
     """
     Get the current figure.
 
-    If no current figure exists, a new one is created using
-    `~.pyplot.figure()`.
+    If there is currently no figure on the pyplot figure stack, a new one is
+    created using `~.pyplot.figure()`.  (To test whether there is currently a
+    figure on the pyplot figure stack, check whether `~.pyplot.get_fignums()`
+    is empty.)
     """
     manager = _pylab_helpers.Gcf.get_active()
     if manager is not None:
@@ -952,7 +975,7 @@ def draw():
 def savefig(*args, **kwargs):
     fig = gcf()
     res = fig.savefig(*args, **kwargs)
-    fig.canvas.draw_idle()   # need this if 'transparent=True' to reset colors
+    fig.canvas.draw_idle()  # Need this if 'transparent=True', to reset colors.
     return res
 
 
@@ -967,10 +990,10 @@ if Figure.legend.__doc__:
 
 ## Axes ##
 
-@docstring.dedent_interpd
+@_docstring.dedent_interpd
 def axes(arg=None, **kwargs):
     """
-    Add an axes to the current figure and make it the current axes.
+    Add an Axes to the current figure and make it the current Axes.
 
     Call signatures::
 
@@ -983,10 +1006,10 @@ def axes(arg=None, **kwargs):
     arg : None or 4-tuple
         The exact behavior of this function depends on the type:
 
-        - *None*: A new full window axes is added using
+        - *None*: A new full window Axes is added using
           ``subplot(**kwargs)``.
         - 4-tuple of floats *rect* = ``[left, bottom, width, height]``.
-          A new axes is added with dimensions *rect* in normalized
+          A new Axes is added with dimensions *rect* in normalized
           (0, 1) units using `~.Figure.add_axes` on the current figure.
 
     projection : {None, 'aitoff', 'hammer', 'lambert', 'mollweide', \
@@ -1001,10 +1024,10 @@ def axes(arg=None, **kwargs):
     sharex, sharey : `~.axes.Axes`, optional
         Share the x or y `~matplotlib.axis` with sharex and/or sharey.
         The axis will have the same limits, ticks, and scale as the axis
-        of the shared axes.
+        of the shared Axes.
 
     label : str
-        A label for the returned axes.
+        A label for the returned Axes.
 
     Returns
     -------
@@ -1017,23 +1040,23 @@ def axes(arg=None, **kwargs):
     ----------------
     **kwargs
         This method also takes the keyword arguments for
-        the returned axes class. The keyword arguments for the
-        rectilinear axes class `~.axes.Axes` can be found in
+        the returned Axes class. The keyword arguments for the
+        rectilinear Axes class `~.axes.Axes` can be found in
         the following table but there might also be other keyword
-        arguments if another projection is used, see the actual axes
+        arguments if another projection is used, see the actual Axes
         class.
 
         %(Axes:kwdoc)s
 
     Notes
     -----
-    If the figure already has a axes with key (*args*,
+    If the figure already has an Axes with key (*args*,
     *kwargs*) then it will simply make that axes current and
     return it.  This behavior is deprecated. Meanwhile, if you do
     not want this behavior (i.e., you want to force the creation of a
-    new axes), you must use a unique set of args and kwargs.  The axes
+    new axes), you must use a unique set of args and kwargs.  The Axes
     *label* attribute has been exposed for this purpose: if you want
-    two axes that are otherwise identical to be added to the figure,
+    two Axes that are otherwise identical to be added to the figure,
     make sure you give them unique labels.
 
     See Also
@@ -1048,15 +1071,19 @@ def axes(arg=None, **kwargs):
     --------
     ::
 
-        # Creating a new full window axes
+        # Creating a new full window Axes
         plt.axes()
 
-        # Creating a new axes with specified dimensions and some kwargs
-        plt.axes((left, bottom, width, height), facecolor='w')
+        # Creating a new Axes with specified dimensions and a grey background
+        plt.axes((left, bottom, width, height), facecolor='grey')
     """
     fig = gcf()
+    pos = kwargs.pop('position', None)
     if arg is None:
-        return fig.add_subplot(**kwargs)
+        if pos is None:
+            return fig.add_subplot(**kwargs)
+        else:
+            return fig.add_axes(pos, **kwargs)
     else:
         return fig.add_axes(arg, **kwargs)
 
@@ -1086,7 +1113,7 @@ def cla():
 
 ## More ways of creating axes ##
 
-@docstring.dedent_interpd
+@_docstring.dedent_interpd
 def subplot(*args, **kwargs):
     """
     Add an Axes to the current figure or retrieve an existing Axes.
@@ -1260,7 +1287,7 @@ def subplot(*args, **kwargs):
     key = SubplotSpec._from_subplot_args(fig, args)
 
     for ax in fig.axes:
-        # if we found an axes at the position sort out if we can re-use it
+        # if we found an Axes at the position sort out if we can re-use it
         if hasattr(ax, 'get_subplotspec') and ax.get_subplotspec() == key:
             # if the user passed no kwargs, re-use
             if kwargs == {}:
@@ -1276,13 +1303,13 @@ def subplot(*args, **kwargs):
 
     fig.sca(ax)
 
-    bbox = ax.bbox
-    axes_to_delete = []
-    for other_ax in fig.axes:
-        if other_ax == ax:
-            continue
-        if bbox.fully_overlaps(other_ax.bbox):
-            axes_to_delete.append(other_ax)
+    axes_to_delete = [other for other in fig.axes
+                      if other != ax and ax.bbox.fully_overlaps(other.bbox)]
+    if axes_to_delete:
+        _api.warn_deprecated(
+            "3.6", message="Auto-removal of overlapping axes is deprecated "
+            "since %(since)s and will be removed %(removal)s; explicitly call "
+            "ax.remove() as needed.")
     for ax_to_del in axes_to_delete:
         delaxes(ax_to_del)
 
@@ -1350,13 +1377,12 @@ def subplots(nrows=1, ncols=1, *, sharex=False, sharey=False, squeeze=True,
 
     Returns
     -------
-    fig : `~.figure.Figure`
+    fig : `.Figure`
 
-    ax : `.axes.Axes` or array of Axes
-        *ax* can be either a single `~matplotlib.axes.Axes` object or an
-        array of Axes objects if more than one subplot was created.  The
-        dimensions of the resulting array can be controlled with the squeeze
-        keyword, see above.
+    ax : `~.axes.Axes` or array of Axes
+        *ax* can be either a single `~.axes.Axes` object, or an array of Axes
+        objects if more than one subplot was created.  The dimensions of the
+        resulting array can be controlled with the squeeze keyword, see above.
 
         Typical idioms for handling the return value are::
 
@@ -1438,10 +1464,13 @@ def subplot_mosaic(mosaic, *, sharex=False, sharey=False,
 
     This is a helper function to build complex GridSpec layouts visually.
 
-    .. note ::
+    .. note::
 
        This API is provisional and may be revised in the future based on
        early user feedback.
+
+    See :doc:`/tutorials/provisional/mosaic`
+    for an example and full API documentation
 
     Parameters
     ----------
@@ -1500,7 +1529,7 @@ def subplot_mosaic(mosaic, *, sharex=False, sharey=False,
 
     Returns
     -------
-    fig : `~.figure.Figure`
+    fig : `.Figure`
        The new figure
 
     dict[label, Axes]
@@ -1567,13 +1596,14 @@ def subplot2grid(shape, loc, rowspan=1, colspan=1, fig=None, **kwargs):
 
     subplotspec = gs.new_subplotspec(loc, rowspan=rowspan, colspan=colspan)
     ax = fig.add_subplot(subplotspec, **kwargs)
-    bbox = ax.bbox
-    axes_to_delete = []
-    for other_ax in fig.axes:
-        if other_ax == ax:
-            continue
-        if bbox.fully_overlaps(other_ax.bbox):
-            axes_to_delete.append(other_ax)
+
+    axes_to_delete = [other for other in fig.axes
+                      if other != ax and ax.bbox.fully_overlaps(other.bbox)]
+    if axes_to_delete:
+        _api.warn_deprecated(
+            "3.6", message="Auto-removal of overlapping axes is deprecated "
+            "since %(since)s and will be removed %(removal)s; explicitly call "
+            "ax.remove() as needed.")
     for ax_to_del in axes_to_delete:
         delaxes(ax_to_del)
 
@@ -1616,20 +1646,20 @@ def subplot_tool(targetfig=None):
     """
     Launch a subplot tool window for a figure.
 
-    A `matplotlib.widgets.SubplotTool` instance is returned. You must maintain
-    a reference to the instance to keep the associated callbacks alive.
+    Returns
+    -------
+    `matplotlib.widgets.SubplotTool`
     """
     if targetfig is None:
         targetfig = gcf()
-    with rc_context({"toolbar": "none"}):  # No navbar for the toolfig.
-        # Use new_figure_manager() instead of figure() so that the figure
-        # doesn't get registered with pyplot.
-        manager = new_figure_manager(-1, (6, 3))
-    manager.set_window_title("Subplot configuration tool")
-    tool_fig = manager.canvas.figure
-    tool_fig.subplots_adjust(top=0.9)
-    manager.show()
-    return SubplotTool(targetfig, tool_fig)
+    tb = targetfig.canvas.manager.toolbar
+    if hasattr(tb, "configure_subplots"):  # toolbar2
+        return tb.configure_subplots()
+    elif hasattr(tb, "trigger_tool"):  # toolmanager
+        return tb.trigger_tool("subplots")
+    else:
+        raise ValueError("subplot_tool can only be launched for figures with "
+                         "an associated toolbar")
 
 
 def box(on=None):
@@ -1782,7 +1812,7 @@ def xticks(ticks=None, labels=None, **kwargs):
     if labels is None:
         labels = ax.get_xticklabels()
         for l in labels:
-            l.update(kwargs)
+            l._internal_update(kwargs)
     else:
         labels = ax.set_xticklabels(labels, **kwargs)
 
@@ -1842,7 +1872,7 @@ def yticks(ticks=None, labels=None, **kwargs):
     if labels is None:
         labels = ax.get_yticklabels()
         for l in labels:
-            l.update(kwargs)
+            l._internal_update(kwargs)
     else:
         labels = ax.set_yticklabels(labels, **kwargs)
 
@@ -2005,260 +2035,13 @@ def get_plot_commands():
     exclude = {'colormaps', 'colors', 'connect', 'disconnect',
                'get_plot_commands', 'get_current_fig_manager', 'ginput',
                'plotting', 'waitforbuttonpress'}
-    exclude |= set(colormaps())
+    exclude |= set(colormaps)
     this_module = inspect.getmodule(get_plot_commands)
     return sorted(
         name for name, obj in globals().items()
         if not name.startswith('_') and name not in exclude
            and inspect.isfunction(obj)
            and inspect.getmodule(obj) is this_module)
-
-
-def colormaps():
-    """
-    Matplotlib provides a number of colormaps, and others can be added using
-    :func:`~matplotlib.cm.register_cmap`.  This function documents the built-in
-    colormaps, and will also return a list of all registered colormaps if
-    called.
-
-    You can set the colormap for an image, pcolor, scatter, etc,
-    using a keyword argument::
-
-      imshow(X, cmap=cm.hot)
-
-    or using the :func:`set_cmap` function::
-
-      imshow(X)
-      pyplot.set_cmap('hot')
-      pyplot.set_cmap('jet')
-
-    In interactive mode, :func:`set_cmap` will update the colormap post-hoc,
-    allowing you to see which one works best for your data.
-
-    All built-in colormaps can be reversed by appending ``_r``: For instance,
-    ``gray_r`` is the reverse of ``gray``.
-
-    There are several common color schemes used in visualization:
-
-    Sequential schemes
-      for unipolar data that progresses from low to high
-    Diverging schemes
-      for bipolar data that emphasizes positive or negative deviations from a
-      central value
-    Cyclic schemes
-      for plotting values that wrap around at the endpoints, such as phase
-      angle, wind direction, or time of day
-    Qualitative schemes
-      for nominal data that has no inherent ordering, where color is used
-      only to distinguish categories
-
-    Matplotlib ships with 4 perceptually uniform colormaps which are
-    the recommended colormaps for sequential data:
-
-      =========   ===================================================
-      Colormap    Description
-      =========   ===================================================
-      inferno     perceptually uniform shades of black-red-yellow
-      magma       perceptually uniform shades of black-red-white
-      plasma      perceptually uniform shades of blue-red-yellow
-      viridis     perceptually uniform shades of blue-green-yellow
-      =========   ===================================================
-
-    The following colormaps are based on the `ColorBrewer
-    <https://colorbrewer2.org>`_ color specifications and designs developed by
-    Cynthia Brewer:
-
-    ColorBrewer Diverging (luminance is highest at the midpoint, and
-    decreases towards differently-colored endpoints):
-
-      ========  ===================================
-      Colormap  Description
-      ========  ===================================
-      BrBG      brown, white, blue-green
-      PiYG      pink, white, yellow-green
-      PRGn      purple, white, green
-      PuOr      orange, white, purple
-      RdBu      red, white, blue
-      RdGy      red, white, gray
-      RdYlBu    red, yellow, blue
-      RdYlGn    red, yellow, green
-      Spectral  red, orange, yellow, green, blue
-      ========  ===================================
-
-    ColorBrewer Sequential (luminance decreases monotonically):
-
-      ========  ====================================
-      Colormap  Description
-      ========  ====================================
-      Blues     white to dark blue
-      BuGn      white, light blue, dark green
-      BuPu      white, light blue, dark purple
-      GnBu      white, light green, dark blue
-      Greens    white to dark green
-      Greys     white to black (not linear)
-      Oranges   white, orange, dark brown
-      OrRd      white, orange, dark red
-      PuBu      white, light purple, dark blue
-      PuBuGn    white, light purple, dark green
-      PuRd      white, light purple, dark red
-      Purples   white to dark purple
-      RdPu      white, pink, dark purple
-      Reds      white to dark red
-      YlGn      light yellow, dark green
-      YlGnBu    light yellow, light green, dark blue
-      YlOrBr    light yellow, orange, dark brown
-      YlOrRd    light yellow, orange, dark red
-      ========  ====================================
-
-    ColorBrewer Qualitative:
-
-    (For plotting nominal data, `.ListedColormap` is used,
-    not `.LinearSegmentedColormap`.  Different sets of colors are
-    recommended for different numbers of categories.)
-
-    * Accent
-    * Dark2
-    * Paired
-    * Pastel1
-    * Pastel2
-    * Set1
-    * Set2
-    * Set3
-
-    A set of colormaps derived from those of the same name provided
-    with Matlab are also included:
-
-      =========   =======================================================
-      Colormap    Description
-      =========   =======================================================
-      autumn      sequential linearly-increasing shades of red-orange-yellow
-      bone        sequential increasing black-white colormap with
-                  a tinge of blue, to emulate X-ray film
-      cool        linearly-decreasing shades of cyan-magenta
-      copper      sequential increasing shades of black-copper
-      flag        repetitive red-white-blue-black pattern (not cyclic at
-                  endpoints)
-      gray        sequential linearly-increasing black-to-white
-                  grayscale
-      hot         sequential black-red-yellow-white, to emulate blackbody
-                  radiation from an object at increasing temperatures
-      jet         a spectral map with dark endpoints, blue-cyan-yellow-red;
-                  based on a fluid-jet simulation by NCSA [#]_
-      pink        sequential increasing pastel black-pink-white, meant
-                  for sepia tone colorization of photographs
-      prism       repetitive red-yellow-green-blue-purple-...-green pattern
-                  (not cyclic at endpoints)
-      spring      linearly-increasing shades of magenta-yellow
-      summer      sequential linearly-increasing shades of green-yellow
-      winter      linearly-increasing shades of blue-green
-      =========   =======================================================
-
-    A set of palettes from the `Yorick scientific visualisation
-    package <https://dhmunro.github.io/yorick-doc/>`_, an evolution of
-    the GIST package, both by David H. Munro are included:
-
-      ============  =======================================================
-      Colormap      Description
-      ============  =======================================================
-      gist_earth    mapmaker's colors from dark blue deep ocean to green
-                    lowlands to brown highlands to white mountains
-      gist_heat     sequential increasing black-red-orange-white, to emulate
-                    blackbody radiation from an iron bar as it grows hotter
-      gist_ncar     pseudo-spectral black-blue-green-yellow-red-purple-white
-                    colormap from National Center for Atmospheric
-                    Research [#]_
-      gist_rainbow  runs through the colors in spectral order from red to
-                    violet at full saturation (like *hsv* but not cyclic)
-      gist_stern    "Stern special" color table from Interactive Data
-                    Language software
-      ============  =======================================================
-
-    A set of cyclic colormaps:
-
-      ================  =================================================
-      Colormap          Description
-      ================  =================================================
-      hsv               red-yellow-green-cyan-blue-magenta-red, formed by
-                        changing the hue component in the HSV color space
-      twilight          perceptually uniform shades of
-                        white-blue-black-red-white
-      twilight_shifted  perceptually uniform shades of
-                        black-blue-white-red-black
-      ================  =================================================
-
-    Other miscellaneous schemes:
-
-      ============= =======================================================
-      Colormap      Description
-      ============= =======================================================
-      afmhot        sequential black-orange-yellow-white blackbody
-                    spectrum, commonly used in atomic force microscopy
-      brg           blue-red-green
-      bwr           diverging blue-white-red
-      coolwarm      diverging blue-gray-red, meant to avoid issues with 3D
-                    shading, color blindness, and ordering of colors [#]_
-      CMRmap        "Default colormaps on color images often reproduce to
-                    confusing grayscale images. The proposed colormap
-                    maintains an aesthetically pleasing color image that
-                    automatically reproduces to a monotonic grayscale with
-                    discrete, quantifiable saturation levels." [#]_
-      cubehelix     Unlike most other color schemes cubehelix was designed
-                    by D.A. Green to be monotonically increasing in terms
-                    of perceived brightness. Also, when printed on a black
-                    and white postscript printer, the scheme results in a
-                    greyscale with monotonically increasing brightness.
-                    This color scheme is named cubehelix because the (r, g, b)
-                    values produced can be visualised as a squashed helix
-                    around the diagonal in the (r, g, b) color cube.
-      gnuplot       gnuplot's traditional pm3d scheme
-                    (black-blue-red-yellow)
-      gnuplot2      sequential color printable as gray
-                    (black-blue-violet-yellow-white)
-      ocean         green-blue-white
-      rainbow       spectral purple-blue-green-yellow-orange-red colormap
-                    with diverging luminance
-      seismic       diverging blue-white-red
-      nipy_spectral black-purple-blue-green-yellow-red-white spectrum,
-                    originally from the Neuroimaging in Python project
-      terrain       mapmaker's colors, blue-green-yellow-brown-white,
-                    originally from IGOR Pro
-      turbo         Spectral map (purple-blue-green-yellow-orange-red) with
-                    a bright center and darker endpoints. A smoother
-                    alternative to jet.
-      ============= =======================================================
-
-    The following colormaps are redundant and may be removed in future
-    versions.  It's recommended to use the names in the descriptions
-    instead, which produce identical output:
-
-      =========  =======================================================
-      Colormap   Description
-      =========  =======================================================
-      gist_gray  identical to *gray*
-      gist_yarg  identical to *gray_r*
-      binary     identical to *gray_r*
-      =========  =======================================================
-
-    .. rubric:: Footnotes
-
-    .. [#] Rainbow colormaps, ``jet`` in particular, are considered a poor
-      choice for scientific visualization by many researchers: `Rainbow Color
-      Map (Still) Considered Harmful
-      <https://ieeexplore.ieee.org/document/4118486/?arnumber=4118486>`_
-
-    .. [#] Resembles "BkBlAqGrYeOrReViWh200" from NCAR Command
-      Language. See `Color Table Gallery
-      <https://www.ncl.ucar.edu/Document/Graphics/color_table_gallery.shtml>`_
-
-    .. [#] See `Diverging Color Maps for Scientific Visualization
-      <http://www.kennethmoreland.com/color-maps/>`_ by Kenneth Moreland.
-
-    .. [#] See `A Color Map for Effective Black-and-White Rendering of
-      Color-Scale Images
-      <https://www.mathworks.com/matlabcentral/fileexchange/2662-cmrmap-m>`_
-      by Carey Rappaport
-    """
-    return sorted(cm._cmap_registry)
 
 
 def _setup_pyplot_info_docstrings():
@@ -2302,7 +2085,7 @@ def _setup_pyplot_info_docstrings():
     ]
     plotting.__doc__ = '\n'.join(lines)
 
-    for cm_name in colormaps():
+    for cm_name in colormaps:
         if cm_name in globals():
             globals()[cm_name].__doc__ = f"""
     Set the colormap to {cm_name!r}.
@@ -2316,7 +2099,7 @@ def _setup_pyplot_info_docstrings():
 
 
 @_copy_docstring_and_deprecators(Figure.colorbar)
-def colorbar(mappable=None, cax=None, ax=None, **kw):
+def colorbar(mappable=None, cax=None, ax=None, **kwargs):
     if mappable is None:
         mappable = gci()
         if mappable is None:
@@ -2324,7 +2107,7 @@ def colorbar(mappable=None, cax=None, ax=None, **kw):
                                'creation. First define a mappable such as '
                                'an image (with imshow) or a contour set ('
                                'with contourf).')
-    ret = gcf().colorbar(mappable, cax=cax, ax=ax, **kw)
+    ret = gcf().colorbar(mappable, cax=cax, ax=ax, **kwargs)
     return ret
 
 
@@ -2449,14 +2232,12 @@ def polar(*args, **kwargs):
     # If an axis already exists, check if it has a polar projection
     if gcf().get_axes():
         ax = gca()
-        if isinstance(ax, PolarAxes):
-            return ax
-        else:
+        if not isinstance(ax, PolarAxes):
             _api.warn_external('Trying to create polar plot on an Axes '
                                'that does not have a polar projection.')
-    ax = axes(projection="polar")
-    ret = ax.plot(*args, **kwargs)
-    return ret
+    else:
+        ax = axes(projection="polar")
+    return ax.plot(*args, **kwargs)
 
 
 # If rcParams['backend_fallback'] is true, and an interactive backend is
@@ -2467,15 +2248,6 @@ if (rcParams["backend_fallback"]
             set(_interactive_bk) - {'WebAgg', 'nbAgg'})
         and cbook._get_running_interactive_framework()):
     dict.__setitem__(rcParams, "backend", rcsetup._auto_backend_sentinel)
-# Set up the backend.
-switch_backend(rcParams["backend"])
-
-# Just to be safe.  Interactive mode can be turned on without
-# calling `plt.ion()` so register it again here.
-# This is safe because multiple calls to `install_repl_displayhook`
-# are no-ops and the registered function respect `mpl.is_interactive()`
-# to determine if they should trigger a draw.
-install_repl_displayhook()
 
 
 ################# REMAINING CONTENT GENERATED BY boilerplate.py ##############
@@ -2568,8 +2340,13 @@ def angle_spectrum(
 
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
 @_copy_docstring_and_deprecators(Axes.annotate)
-def annotate(text, xy, *args, **kwargs):
-    return gca().annotate(text, xy, *args, **kwargs)
+def annotate(
+        text, xy, xytext=None, xycoords='data', textcoords=None,
+        arrowprops=None, annotation_clip=None, **kwargs):
+    return gca().annotate(
+        text, xy, xytext=xytext, xycoords=xycoords,
+        textcoords=textcoords, arrowprops=arrowprops,
+        annotation_clip=annotation_clip, **kwargs)
 
 
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
@@ -2632,9 +2409,10 @@ def bar(
 
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
 @_copy_docstring_and_deprecators(Axes.barbs)
-def barbs(*args, data=None, **kw):
+def barbs(*args, data=None, **kwargs):
     return gca().barbs(
-        *args, **({"data": data} if data is not None else {}), **kw)
+        *args, **({"data": data} if data is not None else {}),
+        **kwargs)
 
 
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
@@ -2664,7 +2442,7 @@ def boxplot(
         showfliers=None, boxprops=None, labels=None, flierprops=None,
         medianprops=None, meanprops=None, capprops=None,
         whiskerprops=None, manage_ticks=True, autorange=False,
-        zorder=None, *, data=None):
+        zorder=None, capwidths=None, *, data=None):
     return gca().boxplot(
         x, notch=notch, sym=sym, vert=vert, whis=whis,
         positions=positions, widths=widths, patch_artist=patch_artist,
@@ -2675,7 +2453,7 @@ def boxplot(
         flierprops=flierprops, medianprops=medianprops,
         meanprops=meanprops, capprops=capprops,
         whiskerprops=whiskerprops, manage_ticks=manage_ticks,
-        autorange=autorange, zorder=zorder,
+        autorange=autorange, zorder=zorder, capwidths=capwidths,
         **({"data": data} if data is not None else {}))
 
 
@@ -2875,12 +2653,13 @@ def hlines(
 def imshow(
         X, cmap=None, norm=None, aspect=None, interpolation=None,
         alpha=None, vmin=None, vmax=None, origin=None, extent=None, *,
-        filternorm=True, filterrad=4.0, resample=None, url=None,
-        data=None, **kwargs):
+        interpolation_stage=None, filternorm=True, filterrad=4.0,
+        resample=None, url=None, data=None, **kwargs):
     __ret = gca().imshow(
         X, cmap=cmap, norm=norm, aspect=aspect,
         interpolation=interpolation, alpha=alpha, vmin=vmin,
         vmax=vmax, origin=origin, extent=extent,
+        interpolation_stage=interpolation_stage,
         filternorm=filternorm, filterrad=filterrad, resample=resample,
         url=url, **({"data": data} if data is not None else {}),
         **kwargs)
@@ -3023,17 +2802,18 @@ def psd(
 
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
 @_copy_docstring_and_deprecators(Axes.quiver)
-def quiver(*args, data=None, **kw):
+def quiver(*args, data=None, **kwargs):
     __ret = gca().quiver(
-        *args, **({"data": data} if data is not None else {}), **kw)
+        *args, **({"data": data} if data is not None else {}),
+        **kwargs)
     sci(__ret)
     return __ret
 
 
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
 @_copy_docstring_and_deprecators(Axes.quiverkey)
-def quiverkey(Q, X, Y, U, label, **kw):
-    return gca().quiverkey(Q, X, Y, U, label, **kw)
+def quiverkey(Q, X, Y, U, label, **kwargs):
+    return gca().quiverkey(Q, X, Y, U, label, **kwargs)
 
 
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.

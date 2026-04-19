@@ -15,7 +15,7 @@ Builtin colormaps, colormap handling utilities, and the `ScalarMappable` mixin.
   normalization.
 """
 
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 
 import numpy as np
 from numpy import ma
@@ -26,7 +26,14 @@ from matplotlib._cm import datad
 from matplotlib._cm_listed import cmaps as cmaps_listed
 
 
-LUTSIZE = mpl.rcParams['image.lut']
+@_api.caching_module_getattr  # module-level deprecations
+class __getattr__:
+    LUTSIZE = _api.deprecated(
+        "3.5", obj_type="", alternative="rcParams['image.lut']")(
+            property(lambda self: _LUTSIZE))
+
+
+_LUTSIZE = mpl.rcParams['image.lut']
 
 
 def _gen_cmap_registry():
@@ -37,11 +44,11 @@ def _gen_cmap_registry():
     cmap_d = {**cmaps_listed}
     for name, spec in datad.items():
         cmap_d[name] = (  # Precache the cmaps at a fixed lutsize..
-            colors.LinearSegmentedColormap(name, spec, LUTSIZE)
+            colors.LinearSegmentedColormap(name, spec, _LUTSIZE)
             if 'red' in spec else
             colors.ListedColormap(spec['listed'], name)
             if 'listed' in spec else
-            colors.LinearSegmentedColormap.from_list(name, spec, LUTSIZE))
+            colors.LinearSegmentedColormap.from_list(name, spec, _LUTSIZE))
     # Generate reversed cmaps.
     for cmap in list(cmap_d.values()):
         rmap = cmap.reversed()
@@ -91,13 +98,102 @@ class _DeprecatedCmapDictWrapper(MutableMapping):
         )
 
 
+class ColormapRegistry(Mapping):
+    r"""
+    Container for colormaps that are known to Matplotlib by name.
+
+    .. admonition:: Experimental
+
+       While we expect the API to be final, we formally mark it as
+       experimental for 3.5 because we want to keep the option to still adapt
+       the API for 3.6 should the need arise.
+
+    The universal registry instance is `matplotlib.colormaps`. There should be
+    no need for users to instantiate `.ColormapRegistry` themselves.
+
+    Read access uses a dict-like interface mapping names to `.Colormap`\s::
+
+        import matplotlib as mpl
+        cmap = mpl.colormaps['viridis']
+
+    Returned `.Colormap`\s are copies, so that their modification does not
+    change the global definition of the colormap.
+
+    Additional colormaps can be added via `.ColormapRegistry.register`::
+
+        mpl.colormaps.register(my_colormap)
+    """
+    def __init__(self, cmaps):
+        self._cmaps = cmaps
+
+    def __getitem__(self, item):
+        try:
+            return self._cmaps[item].copy()
+        except KeyError:
+            raise KeyError(f"{item!r} is not a known colormap name") from None
+
+    def __iter__(self):
+        return iter(self._cmaps)
+
+    def __len__(self):
+        return len(self._cmaps)
+
+    def __str__(self):
+        return ('ColormapRegistry; available colormaps:\n' +
+                ', '.join(f"'{name}'" for name in self))
+
+    def __call__(self):
+        """
+        Return a list of the registered colormap names.
+
+        This exists only for backward-compatibilty in `.pyplot` which had a
+        ``plt.colormaps()`` method. The recommended way to get this list is
+        now ``list(colormaps)``.
+        """
+        return list(self)
+
+    def register(self, cmap, *, name=None, force=False):
+        """
+        Register a new colormap.
+
+        The colormap name can then be used as a string argument to any ``cmap``
+        parameter in Matplotlib. It is also available in ``pyplot.get_cmap``.
+
+        The colormap registry stores a copy of the given colormap, so that
+        future changes to the original colormap instance do not affect the
+        registered colormap. Think of this as the registry taking a snapshot
+        of the colormap at registration.
+
+        Parameters
+        ----------
+        cmap : matplotlib.colors.Colormap
+            The colormap to register.
+
+        name : str, optional
+            The name for the colormap. If not given, ``cmap.name`` is used.
+
+        force : bool, default: False
+            If False, a ValueError is raised if trying to overwrite an already
+            registered name. True supports overwriting registered colormaps
+            other than the builtin colormaps.
+        """
+        name = name or cmap.name
+        if name in self and not force:
+            raise ValueError(
+                f'A colormap named "{name}" is already registered.')
+        register_cmap(name, cmap.copy())
+
+
 _cmap_registry = _gen_cmap_registry()
 globals().update(_cmap_registry)
 # This is no longer considered public API
 cmap_d = _DeprecatedCmapDictWrapper(_cmap_registry)
 __builtin_cmaps = tuple(_cmap_registry)
 
-# Continue with definitions ...
+# public access to the colormaps should be via `matplotlib.colormaps`. For now,
+# we still create the registry here, but that should stay an implementation
+# detail.
+_colormaps = ColormapRegistry(_cmap_registry)
 
 
 def register_cmap(name=None, cmap=None, *, override_builtin=False):
@@ -169,9 +265,9 @@ def get_cmap(name=None, lut=None):
 
     Notes
     -----
-    Currently, this returns the global colormap object, which is deprecated.
-    In Matplotlib 3.5, you will no longer be able to modify the global
-    colormaps in-place.
+    Currently, this returns the global colormap object. This is undesired
+    because users could accidentally modify the global colormap.
+    From Matplotlib 3.6 on, this will return a copy instead.
 
     Parameters
     ----------
@@ -203,7 +299,7 @@ def unregister_cmap(name):
     If the named colormap is not registered, returns with no error, raises
     if you try to de-register a default colormap.
 
-    .. warning ::
+    .. warning::
 
       Colormap names are currently a shared namespace that may be used
       by multiple packages. Use `unregister_cmap` only if you know you
@@ -257,13 +353,16 @@ class ScalarMappable:
             The colormap used to map normalized data values to RGBA colors.
         """
         self._A = None
-        self.norm = None  # So that the setter knows we're initializing.
+        self._norm = None  # So that the setter knows we're initializing.
         self.set_norm(norm)  # The Normalize instance of this ScalarMappable.
         self.cmap = None  # So that the setter knows we're initializing.
         self.set_cmap(cmap)  # The Colormap instance of this ScalarMappable.
         #: The last colorbar associated with this ScalarMappable. May be None.
         self.colorbar = None
-        self.callbacksSM = cbook.CallbackRegistry()
+        self.callbacks = cbook.CallbackRegistry(signals=["changed"])
+
+    callbacksSM = _api.deprecated("3.5", alternative="callbacks")(
+        property(lambda self: self.callbacks))
 
     def _scale_norm(self, norm, vmin, vmax):
         """
@@ -413,6 +512,8 @@ class ScalarMappable:
 
              .. ACCEPTS: (vmin: float, vmax: float)
         """
+        # If the norm's limits are updated self.changed() will be called
+        # through the callbacks attached to the norm
         if vmax is None:
             try:
                 vmin, vmax = vmin
@@ -422,7 +523,6 @@ class ScalarMappable:
             self.norm.vmin = colors._sanitize_extrema(vmin)
         if vmax is not None:
             self.norm.vmax = colors._sanitize_extrema(vmax)
-        self.changed()
 
     def get_alpha(self):
         """
@@ -448,6 +548,30 @@ class ScalarMappable:
         if not in_init:
             self.changed()  # Things are not set up properly yet.
 
+    @property
+    def norm(self):
+        return self._norm
+
+    @norm.setter
+    def norm(self, norm):
+        _api.check_isinstance((colors.Normalize, None), norm=norm)
+        if norm is None:
+            norm = colors.Normalize()
+
+        if norm is self.norm:
+            # We aren't updating anything
+            return
+
+        in_init = self.norm is None
+        # Remove the current callback and connect to the new one
+        if not in_init:
+            self.norm.callbacks.disconnect(self._id_norm)
+        self._norm = norm
+        self._id_norm = self.norm.callbacks.connect('changed',
+                                                    self.changed)
+        if not in_init:
+            self.changed()
+
     def set_norm(self, norm):
         """
         Set the normalization instance.
@@ -462,13 +586,7 @@ class ScalarMappable:
         the norm of the mappable will reset the norm, locator, and formatters
         on the colorbar to default.
         """
-        _api.check_isinstance((colors.Normalize, None), norm=norm)
-        in_init = self.norm is None
-        if norm is None:
-            norm = colors.Normalize()
         self.norm = norm
-        if not in_init:
-            self.changed()  # Things are not set up properly yet.
 
     def autoscale(self):
         """
@@ -477,8 +595,9 @@ class ScalarMappable:
         """
         if self._A is None:
             raise TypeError('You must first set_array for mappable')
+        # If the norm's limits are updated self.changed() will be called
+        # through the callbacks attached to the norm
         self.norm.autoscale(self._A)
-        self.changed()
 
     def autoscale_None(self):
         """
@@ -487,13 +606,14 @@ class ScalarMappable:
         """
         if self._A is None:
             raise TypeError('You must first set_array for mappable')
+        # If the norm's limits are updated self.changed() will be called
+        # through the callbacks attached to the norm
         self.norm.autoscale_None(self._A)
-        self.changed()
 
     def changed(self):
         """
         Call this whenever the mappable is changed to notify all the
         callbackSM listeners to the 'changed' signal.
         """
-        self.callbacksSM.process('changed', self)
+        self.callbacks.process('changed', self)
         self.stale = True

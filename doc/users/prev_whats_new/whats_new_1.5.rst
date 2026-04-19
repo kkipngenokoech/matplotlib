@@ -1,7 +1,7 @@
 .. _whats-new-1-5:
 
-New in matplotlib 1.5
-=====================
+What's new in Matplotlib 1.5 (Oct 29, 2015)
+===========================================
 
 .. contents:: Table of Contents
    :depth: 2
@@ -36,7 +36,7 @@ that the draw command is deferred and only called once.
 The upshot of this is that for interactive backends (including
 ``%matplotlib notebook``) in interactive mode (with ``plt.ion()``)
 
-.. code-block :: python
+.. code-block:: python
 
    import matplotlib.pyplot as plt
    fig, ax = plt.subplots()
@@ -108,9 +108,6 @@ on two or more property cycles.
    :target: ../../tutorials/intermediate/color_cycle.html
    :align: center
    :scale: 50
-
-   Color Cycle
-
 
 New Colormaps
 -------------
@@ -316,9 +313,6 @@ specified, the default value is taken from rcParams.
    :align: center
    :scale: 50
 
-   Contour Corner Mask
-
-
 Mostly unified linestyles for `.Line2D`, `.Patch` and `.Collection`
 ```````````````````````````````````````````````````````````````````
 
@@ -346,7 +340,7 @@ Added a :mod:`.legend_handler` for :class:`~matplotlib.collections.PolyCollectio
 Support for alternate pivots in mplot3d quiver plot
 ```````````````````````````````````````````````````
 
-Added a :code:`pivot` kwarg to :func:`~mpl_toolkits.mplot3d.Axes3D.quiver`
+Added a :code:`pivot` kwarg to `~.Axes3D.quiver`
 that controls the pivot point around which the quiver line rotates. This also
 determines the placement of the arrow head along the quiver line.
 
@@ -378,9 +372,6 @@ This is particularly useful for plotting pre-binned histograms.
    :target: ../../gallery/lines_bars_and_markers/filled_step.html
    :align: center
    :scale: 50
-
-   Filled Step
-
 
 Square Plot
 ```````````

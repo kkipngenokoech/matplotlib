@@ -68,7 +68,13 @@ mpl_GetCurrentProcessExplicitAppUserModelID(PyObject* module)
     wchar_t* appid = NULL;
     HRESULT hr = GetCurrentProcessExplicitAppUserModelID(&appid);
     if (FAILED(hr)) {
+#if defined(PYPY_VERSION_NUM) && PYPY_VERSION_NUM < 0x07030600
+        /* Remove when we require PyPy 7.3.6 */
+        PyErr_SetFromWindowsErr(hr);
+        return NULL;
+#else
         return PyErr_SetFromWindowsErr(hr);
+#endif
     }
     PyObject* py_appid = PyUnicode_FromWideChar(appid, -1);
     CoTaskMemFree(appid);
@@ -89,7 +95,13 @@ mpl_SetCurrentProcessExplicitAppUserModelID(PyObject* module, PyObject* arg)
     HRESULT hr = SetCurrentProcessExplicitAppUserModelID(appid);
     PyMem_Free(appid);
     if (FAILED(hr)) {
+#if defined(PYPY_VERSION_NUM) && PYPY_VERSION_NUM < 0x07030600
+        /* Remove when we require PyPy 7.3.6 */
+        PyErr_SetFromWindowsErr(hr);
+        return NULL;
+#else
         return PyErr_SetFromWindowsErr(hr);
+#endif
     }
     Py_RETURN_NONE;
 #else
@@ -171,35 +183,37 @@ static PyMethodDef functions[] = {
      "Check whether the current X11 or Wayland display is valid.\n\n"
      "On Linux, returns True if either $DISPLAY is set and XOpenDisplay(NULL)\n"
      "succeeds, or $WAYLAND_DISPLAY is set and wl_display_connect(NULL)\n"
-     "succeeds.  On other platforms, always returns True."},
+     "succeeds.\n\n"
+     "On other platforms, always returns True."},
     {"Win32_GetCurrentProcessExplicitAppUserModelID",
      (PyCFunction)mpl_GetCurrentProcessExplicitAppUserModelID, METH_NOARGS,
      "Win32_GetCurrentProcessExplicitAppUserModelID()\n--\n\n"
-     "Wrapper for Windows's GetCurrentProcessExplicitAppUserModelID.  On \n"
-     "non-Windows platforms, always returns None."},
+     "Wrapper for Windows's GetCurrentProcessExplicitAppUserModelID.\n\n"
+     "On non-Windows platforms, always returns None."},
     {"Win32_SetCurrentProcessExplicitAppUserModelID",
      (PyCFunction)mpl_SetCurrentProcessExplicitAppUserModelID, METH_O,
      "Win32_SetCurrentProcessExplicitAppUserModelID(appid, /)\n--\n\n"
-     "Wrapper for Windows's SetCurrentProcessExplicitAppUserModelID.  On \n"
-     "non-Windows platforms, a no-op."},
+     "Wrapper for Windows's SetCurrentProcessExplicitAppUserModelID.\n\n"
+     "On non-Windows platforms, does nothing."},
     {"Win32_GetForegroundWindow",
      (PyCFunction)mpl_GetForegroundWindow, METH_NOARGS,
      "Win32_GetForegroundWindow()\n--\n\n"
-     "Wrapper for Windows' GetForegroundWindow.  On non-Windows platforms, \n"
-     "always returns None."},
+     "Wrapper for Windows' GetForegroundWindow.\n\n"
+     "On non-Windows platforms, always returns None."},
     {"Win32_SetForegroundWindow",
      (PyCFunction)mpl_SetForegroundWindow, METH_O,
      "Win32_SetForegroundWindow(hwnd, /)\n--\n\n"
-     "Wrapper for Windows' SetForegroundWindow.  On non-Windows platforms, \n"
-     "a no-op."},
+     "Wrapper for Windows' SetForegroundWindow.\n\n"
+     "On non-Windows platforms, does nothing."},
     {"Win32_SetProcessDpiAwareness_max",
      (PyCFunction)mpl_SetProcessDpiAwareness_max, METH_NOARGS,
      "Win32_SetProcessDpiAwareness_max()\n--\n\n"
-     "Set Windows' process DPI awareness to best option available.\n"
+     "Set Windows' process DPI awareness to best option available.\n\n"
      "On non-Windows platforms, does nothing."},
     {NULL, NULL}};  // sentinel.
 static PyModuleDef util_module = {
-    PyModuleDef_HEAD_INIT, "_c_internal_utils", "", 0, functions, NULL, NULL, NULL, NULL};
+    PyModuleDef_HEAD_INIT, "_c_internal_utils", NULL, 0, functions
+};
 
 #pragma GCC visibility push(default)
 PyMODINIT_FUNC PyInit__c_internal_utils(void)

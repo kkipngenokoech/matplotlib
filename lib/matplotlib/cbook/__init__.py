@@ -12,6 +12,7 @@ import contextlib
 import functools
 import gzip
 import itertools
+import math
 import operator
 import os
 from pathlib import Path
@@ -28,18 +29,6 @@ import numpy as np
 
 import matplotlib
 from matplotlib import _api, _c_internal_utils
-from matplotlib._api.deprecation import (
-    MatplotlibDeprecationWarning, mplDeprecation)
-
-
-@_api.deprecated("3.4")
-def deprecated(*args, **kwargs):
-    return _api.deprecated(*args, **kwargs)
-
-
-@_api.deprecated("3.4")
-def warn_deprecated(*args, **kwargs):
-    _api.warn_deprecated(*args, **kwargs)
 
 
 def _get_running_interactive_framework():
@@ -50,18 +39,27 @@ def _get_running_interactive_framework():
     Returns
     -------
     Optional[str]
-        One of the following values: "qt5", "gtk3", "wx", "tk", "macosx",
-        "headless", ``None``.
+        One of the following values: "qt", "gtk3", "gtk4", "wx", "tk",
+        "macosx", "headless", ``None``.
     """
     # Use ``sys.modules.get(name)`` rather than ``name in sys.modules`` as
     # entries can also have been explicitly set to None.
-    QtWidgets = (sys.modules.get("PyQt5.QtWidgets")
-                 or sys.modules.get("PySide2.QtWidgets"))
+    QtWidgets = (
+        sys.modules.get("PyQt6.QtWidgets")
+        or sys.modules.get("PySide6.QtWidgets")
+        or sys.modules.get("PyQt5.QtWidgets")
+        or sys.modules.get("PySide2.QtWidgets")
+    )
     if QtWidgets and QtWidgets.QApplication.instance():
-        return "qt5"
+        return "qt"
     Gtk = sys.modules.get("gi.repository.Gtk")
-    if Gtk and Gtk.main_level():
-        return "gtk3"
+    if Gtk:
+        if Gtk.MAJOR_VERSION == 4:
+            from gi.repository import GLib
+            if GLib.main_depth():
+                return "gtk4"
+        if Gtk.MAJOR_VERSION == 3 and Gtk.main_level():
+            return "gtk3"
     wx = sys.modules.get("wx")
     if wx and wx.GetApp():
         return "wx"
@@ -118,7 +116,8 @@ def _weak_or_strong_ref(func, callback):
 
 class CallbackRegistry:
     """
-    Handle registering and disconnecting for a set of signals and callbacks:
+    Handle registering, processing, blocking, and disconnecting
+    for a set of signals and callbacks:
 
         >>> def oneat(x):
         ...    print('eat', x)
@@ -135,9 +134,15 @@ class CallbackRegistry:
         drink 123
         >>> callbacks.process('eat', 456)
         eat 456
-        >>> callbacks.process('be merry', 456) # nothing will be called
+        >>> callbacks.process('be merry', 456)   # nothing will be called
+
         >>> callbacks.disconnect(id_eat)
-        >>> callbacks.process('eat', 456)      # nothing will be called
+        >>> callbacks.process('eat', 456)        # nothing will be called
+
+        >>> with callbacks.blocked(signal='drink'):
+        ...     callbacks.process('drink', 123)  # nothing will be called
+        >>> callbacks.process('drink', 123)
+        drink 123
 
     In practice, one should always disconnect all callbacks when they are
     no longer needed to avoid dangling references (and thus memory leaks).
@@ -158,13 +163,20 @@ class CallbackRegistry:
        The default handler prints the exception (with `traceback.print_exc`) if
        an interactive event loop is running; it re-raises the exception if no
        interactive event loop is running.
+
+    signals : list, optional
+        If not None, *signals* is a list of signals that this registry handles:
+        attempting to `process` or to `connect` to a signal not in the list
+        throws a `ValueError`.  The default, None, does not restrict the
+        handled signals.
     """
 
     # We maintain two mappings:
     #   callbacks: signal -> {cid -> weakref-to-callback}
     #   _func_cid_map: signal -> {weakref-to-callback -> cid}
 
-    def __init__(self, exception_handler=_exception_printer):
+    def __init__(self, exception_handler=_exception_printer, *, signals=None):
+        self._signals = None if signals is None else list(signals)  # Copy it.
         self.exception_handler = exception_handler
         self.callbacks = {}
         self._cid_gen = itertools.count()
@@ -200,6 +212,8 @@ class CallbackRegistry:
         if signal == "units finalize":
             _api.warn_deprecated(
                 "3.5", name=signal, obj_type="signal", alternative="units")
+        if self._signals is not None:
+            _api.check_in_list(self._signals, signal=signal)
         self._func_cid_map.setdefault(signal, {})
         proxy = _weak_or_strong_ref(func, self._remove_proxy)
         if proxy in self._func_cid_map[signal]:
@@ -208,6 +222,16 @@ class CallbackRegistry:
         self._func_cid_map[signal][proxy] = cid
         self.callbacks.setdefault(signal, {})
         self.callbacks[signal][cid] = proxy
+        return cid
+
+    def _connect_picklable(self, signal, func):
+        """
+        Like `.connect`, but the callback is kept when pickling/unpickling.
+
+        Currently internal-use only.
+        """
+        cid = self.connect(signal, func)
+        self._pickled_cids.add(cid)
         return cid
 
     # Keep a reference to sys.is_finalizing, as sys may have been cleared out
@@ -263,6 +287,8 @@ class CallbackRegistry:
         All of the functions registered to receive callbacks on *s* will be
         called with ``*args`` and ``**kwargs``.
         """
+        if self._signals is not None:
+            _api.check_in_list(self._signals, signal=s)
         for cid, ref in list(self.callbacks.get(s, {}).items()):
             func = ref()
             if func is not None:
@@ -275,6 +301,31 @@ class CallbackRegistry:
                         self.exception_handler(exc)
                     else:
                         raise
+
+    @contextlib.contextmanager
+    def blocked(self, *, signal=None):
+        """
+        Block callback signals from being processed.
+
+        A context manager to temporarily block/disable callback signals
+        from being processed by the registered listeners.
+
+        Parameters
+        ----------
+        signal : str, optional
+            The callback signal to block. The default is to block all signals.
+        """
+        orig = self.callbacks
+        try:
+            if signal is None:
+                # Empty out the callbacks
+                self.callbacks = {}
+            else:
+                # Only remove the specific signal
+                self.callbacks = {k: orig[k] for k in orig if k != signal}
+            yield
+        finally:
+            self.callbacks = orig
 
 
 class silent_list(list):
@@ -312,7 +363,8 @@ class silent_list(list):
 
 
 def _local_over_kwdict(
-        local_var, kwargs, *keys, warning_cls=MatplotlibDeprecationWarning):
+        local_var, kwargs, *keys,
+        warning_cls=_api.MatplotlibDeprecationWarning):
     out = local_var
     for key in keys:
         kwarg_val = kwargs.pop(key, None)
@@ -346,6 +398,26 @@ def strip_math(s):
         ]:
             s = s.replace(tex, plain)
     return s
+
+
+def _strip_comment(s):
+    """Strip everything from the first unquoted #."""
+    pos = 0
+    while True:
+        quote_pos = s.find('"', pos)
+        hash_pos = s.find('#', pos)
+        if quote_pos < 0:
+            without_comment = s if hash_pos < 0 else s[:hash_pos]
+            return without_comment.strip()
+        elif 0 <= hash_pos < quote_pos:
+            return s[:hash_pos].strip()
+        else:
+            closing_quote_pos = s.find('"', quote_pos + 1)
+            if closing_quote_pos < 0:
+                raise ValueError(
+                    f"Missing closing quote in: {s!r}. If you need a double-"
+                    'quote inside a string, use escaping: e.g. "the \" char"')
+            pos = closing_quote_pos + 1  # behind closing quote
 
 
 def is_writable_file_like(obj):
@@ -498,6 +570,7 @@ def flatten(seq, scalarp=is_scalar_or_string):
             yield from flatten(item, scalarp)
 
 
+@_api.deprecated("3.6", alternative="functools.lru_cache")
 class maxdict(dict):
     """
     A dictionary with a maximum size.
@@ -906,7 +979,7 @@ def delete_masked_points(*args):
             else:
                 x = np.asarray(x)
         margs.append(x)
-    masks = []    # list of masks that are True where good
+    masks = []  # List of masks that are True where good.
     for i, x in enumerate(margs):
         if seqlist[i]:
             if x.ndim > 1:
@@ -1258,47 +1331,13 @@ def _to_unmasked_float_array(x):
 
 def _check_1d(x):
     """Convert scalars to 1D arrays; pass-through arrays as is."""
+    if hasattr(x, 'to_numpy'):
+        # if we are given an object that creates a numpy, we should use it...
+        x = x.to_numpy()
     if not hasattr(x, 'shape') or len(x.shape) < 1:
         return np.atleast_1d(x)
     else:
-        try:
-            # work around
-            # https://github.com/pandas-dev/pandas/issues/27775 which
-            # means the shape of multi-dimensional slicing is not as
-            # expected.  That this ever worked was an unintentional
-            # quirk of pandas and will raise an exception in the
-            # future.  This slicing warns in pandas >= 1.0rc0 via
-            # https://github.com/pandas-dev/pandas/pull/30588
-            #
-            # < 1.0rc0 : x[:, None].ndim == 1, no warning, custom type
-            # >= 1.0rc1 : x[:, None].ndim == 2, warns, numpy array
-            # future : x[:, None] -> raises
-            #
-            # This code should correctly identify and coerce to a
-            # numpy array all pandas versions.
-            with warnings.catch_warnings(record=True) as w:
-                warnings.filterwarnings(
-                    "always",
-                    category=Warning,
-                    message='Support for multi-dimensional indexing')
-
-                ndim = x[:, None].ndim
-                # we have definitely hit a pandas index or series object
-                # cast to a numpy array.
-                if len(w) > 0:
-                    return np.asanyarray(x)
-            # We have likely hit a pandas object, or at least
-            # something where 2D slicing does not result in a 2D
-            # object.
-            if ndim < 2:
-                return np.atleast_1d(x)
-            return x
-        # In pandas 1.1.0, multidimensional indexing leads to an
-        # AssertionError for some Series objects, but should be
-        # IndexError as described in
-        # https://github.com/pandas-dev/pandas/issues/35527
-        except (AssertionError, IndexError, TypeError):
-            return np.atleast_1d(x)
+        return x
 
 
 def _reshape_2D(X, name):
@@ -1347,9 +1386,13 @@ def _reshape_2D(X, name):
     for xi in X:
         # check if this is iterable, except for strings which we
         # treat as singletons.
-        if (isinstance(xi, collections.abc.Iterable) and
-                not isinstance(xi, str)):
-            is_1d = False
+        if not isinstance(xi, str):
+            try:
+                iter(xi)
+            except TypeError:
+                pass
+            else:
+                is_1d = False
         xi = np.asanyarray(xi)
         nd = np.ndim(xi)
         if nd > 1:
@@ -1603,7 +1646,7 @@ def index_of(y):
        The x and y values to plot.
     """
     try:
-        return y.index.values, y.values
+        return y.index.to_numpy(), y.to_numpy()
     except AttributeError:
         pass
     try:
@@ -1774,61 +1817,6 @@ def _str_lower_equal(obj, s):
     cannot be used in a boolean context.
     """
     return isinstance(obj, str) and obj.lower() == s
-
-
-def _define_aliases(alias_d, cls=None):
-    """
-    Class decorator for defining property aliases.
-
-    Use as ::
-
-        @cbook._define_aliases({"property": ["alias", ...], ...})
-        class C: ...
-
-    For each property, if the corresponding ``get_property`` is defined in the
-    class so far, an alias named ``get_alias`` will be defined; the same will
-    be done for setters.  If neither the getter nor the setter exists, an
-    exception will be raised.
-
-    The alias map is stored as the ``_alias_map`` attribute on the class and
-    can be used by `.normalize_kwargs` (which assumes that higher priority
-    aliases come last).
-    """
-    if cls is None:  # Return the actual class decorator.
-        return functools.partial(_define_aliases, alias_d)
-
-    def make_alias(name):  # Enforce a closure over *name*.
-        @functools.wraps(getattr(cls, name))
-        def method(self, *args, **kwargs):
-            return getattr(self, name)(*args, **kwargs)
-        return method
-
-    for prop, aliases in alias_d.items():
-        exists = False
-        for prefix in ["get_", "set_"]:
-            if prefix + prop in vars(cls):
-                exists = True
-                for alias in aliases:
-                    method = make_alias(prefix + prop)
-                    method.__name__ = prefix + alias
-                    method.__doc__ = "Alias for `{}`.".format(prefix + prop)
-                    setattr(cls, prefix + alias, method)
-        if not exists:
-            raise ValueError(
-                "Neither getter nor setter exists for {!r}".format(prop))
-
-    def get_aliased_and_aliases(d):
-        return {*d, *(alias for aliases in d.values() for alias in aliases)}
-
-    preexisting_aliases = getattr(cls, "_alias_map", {})
-    conflicting = (get_aliased_and_aliases(preexisting_aliases)
-                   & get_aliased_and_aliases(alias_d))
-    if conflicting:
-        # Need to decide on conflict resolution policy.
-        raise NotImplementedError(
-            f"Parent class already defines conflicting aliases: {conflicting}")
-    cls._alias_map = {**preexisting_aliases, **alias_d}
-    return cls
 
 
 def _array_perimeter(arr):
@@ -2163,6 +2151,27 @@ def _format_approx(number, precision):
     Remove trailing zeros and possibly the decimal point.
     """
     return f'{number:.{precision}f}'.rstrip('0').rstrip('.') or '0'
+
+
+def _g_sig_digits(value, delta):
+    """
+    Return the number of significant digits to %g-format *value*, assuming that
+    it is known with an error of *delta*.
+    """
+    if delta == 0:
+        # delta = 0 may occur when trying to format values over a tiny range;
+        # in that case, replace it by the distance to the closest float.
+        delta = np.spacing(value)
+    # If e.g. value = 45.67 and delta = 0.02, then we want to round to 2 digits
+    # after the decimal point (floor(log10(0.02)) = -2); 45.67 contributes 2
+    # digits before the decimal point (floor(log10(45.67)) + 1 = 2): the total
+    # is 4 significant digits.  A value of 0 contributes 1 "digit" before the
+    # decimal point.
+    # For inf or nan, the precision doesn't matter.
+    return max(
+        0,
+        (math.floor(math.log10(abs(value))) + 1 if value else 1)
+        - math.floor(math.log10(delta))) if math.isfinite(value) else 0
 
 
 def _unikey_or_keysym_to_mplkey(unikey, keysym):

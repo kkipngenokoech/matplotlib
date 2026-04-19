@@ -3,7 +3,7 @@ import codecs
 import datetime
 import gzip
 import hashlib
-from io import BytesIO, StringIO
+from io import BytesIO
 import itertools
 import logging
 import os
@@ -16,12 +16,10 @@ from PIL import Image
 import matplotlib as mpl
 from matplotlib import _api, cbook, font_manager as fm
 from matplotlib.backend_bases import (
-     _Backend, _check_savefig_extra_args, FigureCanvasBase, FigureManagerBase,
-     RendererBase)
+     _Backend, FigureCanvasBase, FigureManagerBase, RendererBase)
 from matplotlib.backends.backend_mixed import MixedModeRenderer
 from matplotlib.colors import rgb2hex
 from matplotlib.dates import UTC
-from matplotlib.mathtext import MathTextParser
 from matplotlib.path import Path
 from matplotlib import _path
 from matplotlib.transforms import Affine2D, Affine2DBase
@@ -249,24 +247,32 @@ class XMLWriter:
         pass  # replaced by the constructor
 
 
-def generate_transform(transform_list=[]):
-    if len(transform_list):
-        output = StringIO()
-        for type, value in transform_list:
-            if (type == 'scale' and (value == (1,) or value == (1, 1))
-                    or type == 'translate' and value == (0, 0)
-                    or type == 'rotate' and value == (0,)):
-                continue
-            if type == 'matrix' and isinstance(value, Affine2DBase):
-                value = value.to_values()
-            output.write('%s(%s)' % (
-                type, ' '.join(short_float_fmt(x) for x in value)))
-        return output.getvalue()
-    return ''
+def _generate_transform(transform_list):
+    parts = []
+    for type, value in transform_list:
+        if (type == 'scale' and (value == (1,) or value == (1, 1))
+                or type == 'translate' and value == (0, 0)
+                or type == 'rotate' and value == (0,)):
+            continue
+        if type == 'matrix' and isinstance(value, Affine2DBase):
+            value = value.to_values()
+        parts.append('%s(%s)' % (
+            type, ' '.join(short_float_fmt(x) for x in value)))
+    return ' '.join(parts)
 
 
-def generate_css(attrib={}):
+@_api.deprecated("3.6")
+def generate_transform(transform_list=None):
+    return _generate_transform(transform_list or [])
+
+
+def _generate_css(attrib):
     return "; ".join(f"{k}: {v}" for k, v in attrib.items())
+
+
+@_api.deprecated("3.6")
+def generate_css(attrib=None):
+    return _generate_css(attrib or {})
 
 
 _capstyle_d = {'projecting': 'square', 'butt': 'butt', 'round': 'round'}
@@ -310,11 +316,6 @@ class RendererSVG(RendererBase):
             attrib={'xmlns:xlink': "http://www.w3.org/1999/xlink"})
         self._write_metadata(metadata)
         self._write_default_style()
-
-    @_api.deprecated("3.4")
-    @property
-    def mathtext_parser(self):
-        return MathTextParser('SVG')
 
     def finalize(self):
         self._write_clips()
@@ -441,7 +442,7 @@ class RendererSVG(RendererBase):
 
     def _write_default_style(self):
         writer = self.writer
-        default_style = generate_css({
+        default_style = _generate_css({
             'stroke-linejoin': 'round',
             'stroke-linecap': 'butt'})
         writer.start('defs')
@@ -458,10 +459,7 @@ class RendererSVG(RendererBase):
         return '%s%s' % (type, m.hexdigest()[:10])
 
     def _make_flip_transform(self, transform):
-        return (transform +
-                Affine2D()
-                .scale(1.0, -1.0)
-                .translate(0.0, self.height))
+        return transform + Affine2D().scale(1, -1).translate(0, self.height)
 
     def _get_font(self, prop):
         fname = fm.findfont(prop)
@@ -528,7 +526,7 @@ class RendererSVG(RendererBase):
             writer.element(
                 'path',
                 d=path_data,
-                style=generate_css(hatch_style)
+                style=_generate_css(hatch_style)
                 )
             writer.end('pattern')
         writer.end('defs')
@@ -579,7 +577,7 @@ class RendererSVG(RendererBase):
         return attrib
 
     def _get_style(self, gc, rgbFace):
-        return generate_css(self._get_style_dict(gc, rgbFace))
+        return _generate_css(self._get_style_dict(gc, rgbFace))
 
     def _get_clip_attrs(self, gc):
         cliprect = gc.get_clip_rectangle()
@@ -682,9 +680,9 @@ class RendererSVG(RendererBase):
             marker_trans + Affine2D().scale(1.0, -1.0),
             simplify=False)
         style = self._get_style_dict(gc, rgbFace)
-        dictkey = (path_data, generate_css(style))
+        dictkey = (path_data, _generate_css(style))
         oid = self._markers.get(dictkey)
-        style = generate_css({k: v for k, v in style.items()
+        style = _generate_css({k: v for k, v in style.items()
                               if k.startswith('stroke')})
 
         if oid is None:
@@ -842,13 +840,13 @@ class RendererSVG(RendererBase):
             writer.element(
                 'stop',
                 offset='1',
-                style=generate_css({
+                style=_generate_css({
                     'stop-color': rgb2hex(avg_color),
                     'stop-opacity': short_float_fmt(rgba_color[-1])}))
             writer.element(
                 'stop',
                 offset='0',
-                style=generate_css({'stop-color': rgb2hex(rgba_color),
+                style=_generate_css({'stop-color': rgb2hex(rgba_color),
                                     'stop-opacity': "0"}))
 
             writer.end('linearGradient')
@@ -958,7 +956,7 @@ class RendererSVG(RendererBase):
 
             self.writer.element(
                 'image',
-                transform=generate_transform([
+                transform=_generate_transform([
                     ('scale', (1, -1)), ('translate', (0, -h))]),
                 x=short_float_fmt(x),
                 y=short_float_fmt(-(self.height - y - h)),
@@ -977,7 +975,7 @@ class RendererSVG(RendererBase):
                 .scale(1.0, -1.0)
                 .translate(0.0, self.height))
 
-            attrib['transform'] = generate_transform(
+            attrib['transform'] = _generate_transform(
                 [('matrix', flipped.frozen())])
             attrib['style'] = (
                 'image-rendering:crisp-edges;'
@@ -1007,7 +1005,7 @@ class RendererSVG(RendererBase):
                     Path(vertices * 64, codes), simplify=False)
                 writer.element(
                     'path', id=char_id, d=path_data,
-                    transform=generate_transform([('scale', (1 / 64,))]))
+                    transform=_generate_transform([('scale', (1 / 64,))]))
             writer.end('defs')
             self._glyph_map.update(glyph_map_new)
 
@@ -1045,8 +1043,8 @@ class RendererSVG(RendererBase):
             style['opacity'] = short_float_fmt(alpha)
         font_scale = fontsize / text2path.FONT_SCALE
         attrib = {
-            'style': generate_css(style),
-            'transform': generate_transform([
+            'style': _generate_css(style),
+            'transform': _generate_transform([
                 ('translate', (x, y)),
                 ('rotate', (-angle,)),
                 ('scale', (font_scale, -font_scale))]),
@@ -1082,7 +1080,7 @@ class RendererSVG(RendererBase):
                 char_id = self._adjust_char_id(char_id)
                 writer.element(
                     'use',
-                    transform=generate_transform([
+                    transform=_generate_transform([
                         ('translate', (xposition, yposition)),
                         ('scale', (scale,)),
                         ]),
@@ -1125,7 +1123,7 @@ class RendererSVG(RendererBase):
             style['font'] = ' '.join(font_parts)
             if prop.get_stretch() != 'normal':
                 style['font-stretch'] = prop.get_stretch()
-            attrib['style'] = generate_css(style)
+            attrib['style'] = _generate_css(style)
 
             if mtext and (angle == 0 or mtext.get_rotation_mode() == "anchor"):
                 # If text anchoring can be supported, get the original
@@ -1151,18 +1149,16 @@ class RendererSVG(RendererBase):
 
                 attrib['x'] = short_float_fmt(ax)
                 attrib['y'] = short_float_fmt(ay)
-                attrib['style'] = generate_css(style)
-                attrib['transform'] = "rotate(%s, %s, %s)" % (
-                    short_float_fmt(-angle),
-                    short_float_fmt(ax),
-                    short_float_fmt(ay))
-                writer.element('text', s, attrib=attrib)
+                attrib['style'] = _generate_css(style)
+                attrib['transform'] = _generate_transform([
+                    ("rotate", (-angle, ax, ay))])
+
             else:
-                attrib['transform'] = generate_transform([
+                attrib['transform'] = _generate_transform([
                     ('translate', (x, y)),
                     ('rotate', (-angle,))])
 
-                writer.element('text', s, attrib=attrib)
+            writer.element('text', s, attrib=attrib)
 
         else:
             writer.comment(s)
@@ -1173,8 +1169,8 @@ class RendererSVG(RendererBase):
             # Apply attributes to 'g', not 'text', because we likely have some
             # rectangles as well with the same style and transformation.
             writer.start('g',
-                         style=generate_css(style),
-                         transform=generate_transform([
+                         style=_generate_css(style),
+                         transform=_generate_transform([
                              ('translate', (x, y)),
                              ('rotate', (-angle,))]),
                          )
@@ -1199,7 +1195,7 @@ class RendererSVG(RendererBase):
                 style = {'font': ' '.join(font_parts)}
                 if entry.stretch != 'normal':
                     style['font-stretch'] = entry.stretch
-                style = generate_css(style)
+                style = _generate_css(style)
                 if thetext == 32:
                     thetext = 0xa0  # non-breaking space
                 spans.setdefault(style, []).append((new_x, -new_y, thetext))
@@ -1282,10 +1278,8 @@ class FigureCanvasSVG(FigureCanvasBase):
 
     fixed_dpi = 72
 
-    @_check_savefig_extra_args
-    @_api.delete_parameter("3.4", "dpi")
     @_api.delete_parameter("3.5", "args")
-    def print_svg(self, filename, *args, dpi=None, bbox_inches_restore=None,
+    def print_svg(self, filename, *args, bbox_inches_restore=None,
                   metadata=None):
         """
         Parameters
@@ -1321,8 +1315,7 @@ class FigureCanvasSVG(FigureCanvasBase):
         with cbook.open_file_cm(filename, "w", encoding="utf-8") as fh:
             if not cbook.file_requires_unicode(fh):
                 fh = codecs.getwriter('utf-8')(fh)
-            if dpi is None:  # always use this branch after deprecation elapses
-                dpi = self.figure.get_dpi()
+            dpi = self.figure.get_dpi()
             self.figure.set_dpi(72)
             width, height = self.figure.get_size_inches()
             w, h = width * 72, height * 72
@@ -1343,7 +1336,7 @@ class FigureCanvasSVG(FigureCanvasBase):
         return 'svg'
 
     def draw(self):
-        self.figure.draw_no_output()
+        self.figure.draw_without_rendering()
         return super().draw()
 
 

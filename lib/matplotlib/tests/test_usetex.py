@@ -1,7 +1,10 @@
+from tempfile import TemporaryFile
+
 import numpy as np
 import pytest
 
 import matplotlib as mpl
+from matplotlib import dviread
 from matplotlib.testing import _has_tex_package
 from matplotlib.testing.decorators import check_figures_equal, image_comparison
 import matplotlib.pyplot as plt
@@ -100,8 +103,38 @@ def test_usetex_packages(pkg):
                                   text.get_window_extent())
 
 
-def test_textcomp_full():
-    plt.rcParams["text.latex.preamble"] = r"\usepackage[full]{textcomp}"
+@pytest.mark.parametrize(
+    "preamble",
+    [r"\usepackage[full]{textcomp}", r"\usepackage{underscore}"],
+)
+def test_latex_pkg_already_loaded(preamble):
+    plt.rcParams["text.latex.preamble"] = preamble
     fig = plt.figure()
     fig.text(.5, .5, "hello, world", usetex=True)
     fig.canvas.draw()
+
+
+def test_usetex_with_underscore():
+    plt.rcParams["text.usetex"] = True
+    df = {"a_b": range(5)[::-1], "c": range(5)}
+    fig, ax = plt.subplots()
+    ax.plot("c", "a_b", data=df)
+    ax.legend()
+    ax.text(0, 0, "foo_bar", usetex=True)
+    plt.draw()
+
+
+@pytest.mark.flaky(reruns=3)  # Tends to hit a TeX cache lock on AppVeyor.
+@pytest.mark.parametrize("fmt", ["pdf", "svg"])
+def test_missing_psfont(fmt, monkeypatch):
+    """An error is raised if a TeX font lacks a Type-1 equivalent"""
+    monkeypatch.setattr(
+        dviread.PsfontsMap, '__getitem__',
+        lambda self, k: dviread.PsFont(
+            texname='texfont', psname='Some Font',
+            effects=None, encoding=None, filename=None))
+    mpl.rcParams['text.usetex'] = True
+    fig, ax = plt.subplots()
+    ax.text(0.5, 0.5, 'hello')
+    with TemporaryFile() as tmpfile, pytest.raises(ValueError):
+        fig.savefig(tmpfile, format=fmt)
