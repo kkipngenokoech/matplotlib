@@ -166,12 +166,16 @@ class Line3D(lines.Line2D):
         Keyword arguments are passed onto :func:`~matplotlib.lines.Line2D`.
         """
         super().__init__([], [], *args, **kwargs)
-        self._verts3d = xs, ys, zs
+        # Ensure _verts3d is always initialized as a tuple of arrays
+        self._verts3d = (np.asarray(xs), np.asarray(ys), np.asarray(zs))
 
     def set_3d_properties(self, zs=0, zdir='z'):
         xs = self.get_xdata()
         ys = self.get_ydata()
-        zs = np.broadcast_to(zs, len(xs))
+        # Ensure we have proper arrays
+        xs = np.asarray(xs) if len(xs) > 0 else np.array([])
+        ys = np.asarray(ys) if len(ys) > 0 else np.array([])
+        zs = np.broadcast_to(zs, len(xs)) if len(xs) > 0 else np.array([])
         self._verts3d = juggle_axes(xs, ys, zs, zdir)
         self.stale = True
 
@@ -193,9 +197,20 @@ class Line3D(lines.Line2D):
         Accepts x, y, z arguments or a single array-like (x, y, z)
         """
         if len(args) == 1:
-            self._verts3d = args[0]
+            # Handle single argument case - should be a sequence of (x, y, z)
+            if len(args[0]) == 3:
+                self._verts3d = (np.asarray(args[0][0]), 
+                               np.asarray(args[0][1]), 
+                               np.asarray(args[0][2]))
+            else:
+                raise ValueError("Single argument must be a sequence of length 3 (x, y, z)")
+        elif len(args) == 3:
+            # Handle three separate arguments
+            self._verts3d = (np.asarray(args[0]), 
+                           np.asarray(args[1]), 
+                           np.asarray(args[2]))
         else:
-            self._verts3d = args
+            raise ValueError("Expected 1 or 3 arguments, got {}".format(len(args)))
         self.stale = True
 
     def get_data_3d(self):
@@ -211,9 +226,24 @@ class Line3D(lines.Line2D):
 
     @artist.allow_rasterization
     def draw(self, renderer):
+        # Ensure _verts3d exists and is properly formatted
+        if not hasattr(self, '_verts3d') or self._verts3d is None:
+            # Initialize with empty arrays if missing
+            self._verts3d = (np.array([]), np.array([]), np.array([]))
+        
         xs3d, ys3d, zs3d = self._verts3d
-        xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, self.axes.M)
-        self.set_data(xs, ys)
+        # Ensure all components are arrays
+        xs3d = np.asarray(xs3d)
+        ys3d = np.asarray(ys3d)
+        zs3d = np.asarray(zs3d)
+        
+        if len(xs3d) > 0 and len(ys3d) > 0 and len(zs3d) > 0:
+            xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, self.axes.M)
+            self.set_data(xs, ys)
+        else:
+            # Handle empty data case
+            self.set_data([], [])
+        
         super().draw(renderer)
         self.stale = False
 
