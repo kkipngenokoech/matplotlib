@@ -2,13 +2,14 @@
 2D lines with support for a variety of line styles, markers, colors, etc.
 """
 
+import copy
+
 from numbers import Integral, Number, Real
 import logging
 
 import numpy as np
 
-import matplotlib as mpl
-from . import _api, artist, cbook, colors as mcolors, docstring, rcParams
+from . import _api, cbook, colors as mcolors, _docstring, rcParams
 from .artist import Artist, allow_rasterization
 from .cbook import (
     _to_unmasked_float_array, ls_mapper, ls_mapper_r, STEP_LOOKUP_MAP)
@@ -104,7 +105,7 @@ def segment_hits(cx, cy, x, y, radius):
     return np.concatenate((points, lines))
 
 
-def _mark_every_path(markevery, tpath, affine, ax_transform):
+def _mark_every_path(markevery, tpath, affine, ax):
     """
     Helper function that sorts out how to deal the input
     `markevery` and returns the points where markers should be drawn.
@@ -152,6 +153,10 @@ def _mark_every_path(markevery, tpath, affine, ax_transform):
                     '`markevery` is a tuple with len 2 and second element is '
                     'a float, but the first element is not a float or an int; '
                     'markevery={}'.format(markevery))
+            if ax is None:
+                raise ValueError(
+                    "markevery is specified relative to the axes size, but "
+                    "the line does not have a Axes as parent")
             # calc cumulative distance along path (in display coords):
             disp_coords = affine.transform(tpath.vertices)
             delta = np.empty((len(disp_coords), 2))
@@ -160,7 +165,7 @@ def _mark_every_path(markevery, tpath, affine, ax_transform):
             delta = np.hypot(*delta.T).cumsum()
             # calc distance between markers along path based on the axes
             # bounding box diagonal being a distance of unity:
-            (x0, y0), (x1, y1) = ax_transform.transform([[0, 0], [1, 1]])
+            (x0, y0), (x1, y1) = ax.transAxes.transform([[0, 0], [1, 1]])
             scale = np.hypot(x1 - x0, y1 - y0)
             marker_delta = np.arange(start * scale, delta[-1], step * scale)
             # find closest actual data point that is closest to
@@ -191,8 +196,8 @@ def _mark_every_path(markevery, tpath, affine, ax_transform):
         raise ValueError(f"markevery={markevery!r} is not a recognized value")
 
 
-@docstring.interpd
-@cbook._define_aliases({
+@_docstring.interpd
+@_api.define_aliases({
     "antialiased": ["aa"],
     "color": ["c"],
     "drawstyle": ["ds"],
@@ -245,16 +250,6 @@ class Line2D(Artist):
     fillStyles = MarkerStyle.fillstyles
 
     zorder = 2
-
-    @_api.deprecated("3.4")
-    @_api.classproperty
-    def validCap(cls):
-        return tuple(cs.value for cs in CapStyle)
-
-    @_api.deprecated("3.4")
-    @_api.classproperty
-    def validJoin(cls):
-        return tuple(js.value for js in JoinStyle)
 
     def __str__(self):
         if self._label != "":
@@ -349,14 +344,8 @@ class Line2D(Artist):
         self._linestyles = None
         self._drawstyle = None
         self._linewidth = linewidth
-
-        # scaled dash + offset
-        self._dashSeq = None
-        self._dashOffset = 0
-        # unscaled dash + offset
-        # this is needed scaling the dash pattern by linewidth
-        self._us_dashSeq = None
-        self._us_dashOffset = 0
+        self._unscaled_dash_pattern = (0, None)  # offset, dash
+        self._dash_pattern = (0, None)  # offset, dash (scaled by linewidth)
 
         self.set_linewidth(linewidth)
         self.set_linestyle(linestyle)
@@ -364,7 +353,12 @@ class Line2D(Artist):
 
         self._color = None
         self.set_color(color)
-        self._marker = MarkerStyle(marker, fillstyle)
+        if marker is None:
+            marker = 'none'  # Default.
+        if not isinstance(marker, MarkerStyle):
+            self._marker = MarkerStyle(marker, fillstyle)
+        else:
+            self._marker = marker
 
         self._markevery = None
         self._markersize = None
@@ -386,7 +380,7 @@ class Line2D(Artist):
 
         # update kwargs before updating data to give the caller a
         # chance to init axes (and hence unit support)
-        self.update(kwargs)
+        self._internal_update(kwargs)
         self.pickradius = pickradius
         self.ind_offset = 0
         if (isinstance(self._picker, Number) and
@@ -542,37 +536,39 @@ class Line2D(Artist):
 (float, float) or list[bool]
             Which markers to plot.
 
-            - every=None, every point will be plotted.
-            - every=N, every N-th marker will be plotted starting with
+            - ``every=None``: every point will be plotted.
+            - ``every=N``: every N-th marker will be plotted starting with
               marker 0.
-            - every=(start, N), every N-th marker, starting at point
-              start, will be plotted.
-            - every=slice(start, end, N), every N-th marker, starting at
-              point start, up to but not including point end, will be plotted.
-            - every=[i, j, m, n], only markers at points i, j, m, and n
-              will be plotted.
-            - every=[True, False, True], positions that are True will be
+            - ``every=(start, N)``: every N-th marker, starting at index
+              *start*, will be plotted.
+            - ``every=slice(start, end, N)``: every N-th marker, starting at
+              index *start*, up to but not including index *end*, will be
               plotted.
-            - every=0.1, (i.e. a float) then markers will be spaced at
-              approximately equal distances along the line; the distance
+            - ``every=[i, j, m, ...]``: only markers at the given indices
+              will be plotted.
+            - ``every=[True, False, True, ...]``: only positions that are True
+              will be plotted. The list must have the same length as the data
+              points.
+            - ``every=0.1``, (i.e. a float): markers will be spaced at
+              approximately equal visual distances along the line; the distance
               along the line between markers is determined by multiplying the
               display-coordinate distance of the axes bounding-box diagonal
-              by the value of every.
-            - every=(0.5, 0.1) (i.e. a length-2 tuple of float), the same
-              functionality as every=0.1 is exhibited but the first marker will
-              be 0.5 multiplied by the display-coordinate-diagonal-distance
-              along the line.
+              by the value of *every*.
+            - ``every=(0.5, 0.1)`` (i.e. a length-2 tuple of float): similar
+              to ``every=0.1`` but the first marker will be offset along the
+              line by 0.5 multiplied by the
+              display-coordinate-diagonal-distance along the line.
 
             For examples see
             :doc:`/gallery/lines_bars_and_markers/markevery_demo`.
 
         Notes
         -----
-        Setting the markevery property will only show markers at actual data
-        points.  When using float arguments to set the markevery property
-        on irregularly spaced data, the markers will likely not appear evenly
-        spaced because the actual data points do not coincide with the
-        theoretical spacing between markers.
+        Setting *markevery* will still only draw markers at actual data points.
+        While the float argument form aims for uniform visual spacing, it has
+        to coerce from the ideal spacing to the nearest available data point.
+        Depending on the number and distribution of data points, the result
+        may still not look evenly spaced.
 
         When using a start offset to specify the first marker, the offset will
         be from the first data point which may be different from the first
@@ -597,7 +593,7 @@ class Line2D(Artist):
 
     def set_picker(self, p):
         """
-        Sets the event picker details for the line.
+        Set the event picker details for the line.
 
         Parameters
         ----------
@@ -609,6 +605,12 @@ class Line2D(Artist):
         else:
             self.pickradius = p
         self._picker = p
+
+    def get_bbox(self):
+        """Get the bounding box of this line."""
+        bbox = Bbox([[0, 0], [0, 0]])
+        bbox.update_from_data_xy(self.get_xydata())
+        return bbox
 
     def get_window_extent(self, renderer):
         bbox = Bbox([[0, 0], [0, 0]])
@@ -660,7 +662,8 @@ class Line2D(Artist):
                 self.axes.name == 'rectilinear' and
                 self.axes.get_xscale() == 'linear' and
                 self._markevery is None and
-                self.get_clip_on()):
+                self.get_clip_on() and
+                self.get_transform() == self.axes.transData):
             self._subslice = True
             nanmask = np.isnan(x)
             if nanmask.any():
@@ -684,7 +687,7 @@ class Line2D(Artist):
 
     def _transform_path(self, subslice=None):
         """
-        Puts a TransformedPath instance at self._transformed_path;
+        Put a TransformedPath instance at self._transformed_path;
         all invalidation of the transform is then handled by the
         TransformedPath instance.
         """
@@ -765,7 +768,7 @@ class Line2D(Artist):
                 if self.get_sketch_params() is not None:
                     gc.set_sketch_params(*self.get_sketch_params())
 
-                gc.set_dashes(self._dashOffset, self._dashSeq)
+                gc.set_dashes(*self._dash_pattern)
                 renderer.draw_path(gc, tpath, affine.frozen())
                 gc.restore()
 
@@ -812,8 +815,8 @@ class Line2D(Artist):
                 # subsample the markers if markevery is not None
                 markevery = self.get_markevery()
                 if markevery is not None:
-                    subsampled = _mark_every_path(markevery, tpath,
-                                                  affine, self.axes.transAxes)
+                    subsampled = _mark_every_path(
+                        markevery, tpath, affine, self.axes)
                 else:
                     subsampled = tpath
 
@@ -1069,13 +1072,10 @@ class Line2D(Artist):
             Line width, in points.
         """
         w = float(w)
-
         if self._linewidth != w:
             self.stale = True
         self._linewidth = w
-        # rescale the dashes + offset
-        self._dashOffset, self._dashSeq = _scale_dashes(
-            self._us_dashOffset, self._us_dashSeq, self._linewidth)
+        self._dash_pattern = _scale_dashes(*self._unscaled_dash_pattern, w)
 
     def set_linestyle(self, ls):
         """
@@ -1088,15 +1088,15 @@ class Line2D(Artist):
 
             - A string:
 
-              ===============================   =================
-              Linestyle                         Description
-              ===============================   =================
-              ``'-'`` or ``'solid'``            solid line
-              ``'--'`` or  ``'dashed'``         dashed line
-              ``'-.'`` or  ``'dashdot'``        dash-dotted line
-              ``':'`` or ``'dotted'``           dotted line
-              ``'None'`` or ``' '`` or ``''``   draw nothing
-              ===============================   =================
+              ==========================================  =================
+              linestyle                                   description
+              ==========================================  =================
+              ``'-'`` or ``'solid'``                      solid line
+              ``'--'`` or  ``'dashed'``                   dashed line
+              ``'-.'`` or  ``'dashdot'``                  dash-dotted line
+              ``':'`` or ``'dotted'``                     dotted line
+              ``'none'``, ``'None'``, ``' '``, or ``''``  draw nothing
+              ==========================================  =================
 
             - Alternatively a dash tuple of the following form can be
               provided::
@@ -1111,21 +1111,18 @@ class Line2D(Artist):
         if isinstance(ls, str):
             if ls in [' ', '', 'none']:
                 ls = 'None'
-
             _api.check_in_list([*self._lineStyles, *ls_mapper_r], ls=ls)
             if ls not in self._lineStyles:
                 ls = ls_mapper_r[ls]
             self._linestyle = ls
         else:
             self._linestyle = '--'
+        self._unscaled_dash_pattern = _get_dash_pattern(ls)
+        self._dash_pattern = _scale_dashes(
+            *self._unscaled_dash_pattern, self._linewidth)
+        self.stale = True
 
-        # get the unscaled dashes
-        self._us_dashOffset, self._us_dashSeq = _get_dash_pattern(ls)
-        # compute the linewidth scaled dashes
-        self._dashOffset, self._dashSeq = _scale_dashes(
-            self._us_dashOffset, self._us_dashSeq, self._linewidth)
-
-    @docstring.interpd
+    @_docstring.interpd
     def set_marker(self, marker):
         """
         Set the line marker.
@@ -1220,7 +1217,7 @@ class Line2D(Artist):
         ----------
         x : 1D array
         """
-        self._xorig = x
+        self._xorig = copy.copy(x)
         self._invalidx = True
         self.stale = True
 
@@ -1232,7 +1229,7 @@ class Line2D(Artist):
         ----------
         y : 1D array
         """
-        self._yorig = y
+        self._yorig = copy.copy(y)
         self._invalidy = True
         self.stale = True
 
@@ -1268,10 +1265,8 @@ class Line2D(Artist):
         self._markerfacecoloralt = other._markerfacecoloralt
         self._markeredgecolor = other._markeredgecolor
         self._markeredgewidth = other._markeredgewidth
-        self._dashSeq = other._dashSeq
-        self._us_dashSeq = other._us_dashSeq
-        self._dashOffset = other._dashOffset
-        self._us_dashOffset = other._us_dashOffset
+        self._unscaled_dash_pattern = other._unscaled_dash_pattern
+        self._dash_pattern = other._dash_pattern
         self._dashcapstyle = other._dashcapstyle
         self._dashjoinstyle = other._dashjoinstyle
         self._solidcapstyle = other._solidcapstyle
@@ -1281,10 +1276,12 @@ class Line2D(Artist):
         self._marker = MarkerStyle(marker=other._marker)
         self._drawstyle = other._drawstyle
 
-    @docstring.interpd
+    @_docstring.interpd
     def set_dash_joinstyle(self, s):
         """
         How to join segments of the line if it `~Line2D.is_dashed`.
+
+        The default joinstyle is :rc:`lines.dash_joinstyle`.
 
         Parameters
         ----------
@@ -1295,10 +1292,12 @@ class Line2D(Artist):
             self.stale = True
         self._dashjoinstyle = js
 
-    @docstring.interpd
+    @_docstring.interpd
     def set_solid_joinstyle(self, s):
         """
         How to join segments if the line is solid (not `~Line2D.is_dashed`).
+
+        The default joinstyle is :rc:`lines.solid_joinstyle`.
 
         Parameters
         ----------
@@ -1325,10 +1324,12 @@ class Line2D(Artist):
         """
         return self._solidjoinstyle.name
 
-    @docstring.interpd
+    @_docstring.interpd
     def set_dash_capstyle(self, s):
         """
         How to draw the end caps if the line is `~Line2D.is_dashed`.
+
+        The default capstyle is :rc:`lines.dash_capstyle`.
 
         Parameters
         ----------
@@ -1339,10 +1340,12 @@ class Line2D(Artist):
             self.stale = True
         self._dashcapstyle = cs
 
-    @docstring.interpd
+    @_docstring.interpd
     def set_solid_capstyle(self, s):
         """
         How to draw the end caps if the line is solid (not `~Line2D.is_dashed`)
+
+        The default capstyle is :rc:`lines.solid_capstyle`.
 
         Parameters
         ----------

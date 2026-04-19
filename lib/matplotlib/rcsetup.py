@@ -25,7 +25,7 @@ import numpy as np
 from matplotlib import _api, cbook
 from matplotlib.cbook import ls_mapper
 from matplotlib.colors import Colormap, is_color_like
-from matplotlib.fontconfig_pattern import parse_fontconfig_pattern
+from matplotlib._fontconfig_pattern import parse_fontconfig_pattern
 from matplotlib._enums import JoinStyle, CapStyle
 
 # Don't let the original cycler collide with our validating cycler
@@ -34,13 +34,15 @@ from cycler import Cycler, cycler as ccycler
 
 # The capitalized forms are needed for ipython at present; this may
 # change for later versions.
-interactive_bk = ['GTK3Agg', 'GTK3Cairo',
-                  'MacOSX',
-                  'nbAgg',
-                  'Qt5Agg', 'Qt5Cairo',
-                  'TkAgg', 'TkCairo',
-                  'WebAgg',
-                  'WX', 'WXAgg', 'WXCairo']
+interactive_bk = [
+    'GTK3Agg', 'GTK3Cairo', 'GTK4Agg', 'GTK4Cairo',
+    'MacOSX',
+    'nbAgg',
+    'QtAgg', 'QtCairo', 'Qt5Agg', 'Qt5Cairo',
+    'TkAgg', 'TkCairo',
+    'WebAgg',
+    'WX', 'WXAgg', 'WXCairo',
+]
 non_interactive_bk = ['agg', 'cairo',
                       'pdf', 'pgf', 'ps', 'svg', 'template']
 all_backends = interactive_bk + non_interactive_bk
@@ -145,26 +147,6 @@ def validate_bool(b):
         return False
     else:
         raise ValueError('Could not convert "%s" to bool' % b)
-
-
-def _validate_date_converter(s):
-    if s is None:
-        return
-    s = validate_string(s)
-    if s not in ['auto', 'concise']:
-        _api.warn_external(f'date.converter string must be "auto" or '
-                           f'"concise", not "{s}".  Check your matplotlibrc')
-        return
-    import matplotlib.dates as mdates
-    mdates._rcParam_helper.set_converter(s)
-
-
-def _validate_date_int_mult(s):
-    if s is None:
-        return
-    s = validate_bool(s)
-    import matplotlib.dates as mdates
-    mdates._rcParam_helper.set_int_mult(s)
 
 
 def validate_axisbelow(s):
@@ -405,6 +387,20 @@ def validate_fontweight(s):
         raise ValueError(f'{s} is not a valid font weight.') from e
 
 
+def validate_fontstretch(s):
+    stretchvalues = [
+        'ultra-condensed', 'extra-condensed', 'condensed', 'semi-condensed',
+        'normal', 'semi-expanded', 'expanded', 'extra-expanded',
+        'ultra-expanded']
+    # Note: Historically, stretchvalues have been case-sensitive in Matplotlib
+    if s in stretchvalues:
+        return s
+    try:
+        return int(s)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f'{s} is not a valid font stretch.') from e
+
+
 def validate_font_properties(s):
     parse_fontconfig_pattern(s)
     return s
@@ -432,7 +428,7 @@ def validate_whiskers(s):
         try:
             return float(s)
         except ValueError as e:
-            raise ValueError("Not a valid whisker value ['range', float, "
+            raise ValueError("Not a valid whisker value [float, "
                              "(float, float)]") from e
 
 
@@ -503,14 +499,11 @@ def validate_markevery(s):
 
     Parameters
     ----------
-    s : None, int, float, slice, length-2 tuple of ints,
-        length-2 tuple of floats, list of ints
+    s : None, int, (int, int), slice, float, (float, float), or list[int]
 
     Returns
     -------
-    None, int, float, slice, length-2 tuple of ints,
-        length-2 tuple of floats, list of ints
-
+    None, int, (int, int), slice, float, (float, float), or list[int]
     """
     # Validate s against type slice float int and None
     if isinstance(s, (slice, float, int, type(None))):
@@ -721,6 +714,13 @@ def cycler(*args, **kwargs):
     return reduce(operator.add, (ccycler(k, v) for k, v in validated))
 
 
+class _DunderChecker(ast.NodeVisitor):
+    def visit_Attribute(self, node):
+        if node.attr.startswith("__") and node.attr.endswith("__"):
+            raise ValueError("cycler strings with dunders are forbidden")
+        self.generic_visit(node)
+
+
 def validate_cycler(s):
     """Return a Cycler object from a string repr or the object itself."""
     if isinstance(s, str):
@@ -732,13 +732,11 @@ def validate_cycler(s):
         # I locked it down by only having the 'cycler()' function available.
         # UPDATE: Partly plugging a security hole.
         # I really should have read this:
-        # http://nedbatchelder.com/blog/201206/eval_really_is_dangerous.html
+        # https://nedbatchelder.com/blog/201206/eval_really_is_dangerous.html
         # We should replace this eval with a combo of PyParsing and
         # ast.literal_eval()
         try:
-            if '.__' in s.replace(' ', ''):
-                raise ValueError("'%s' seems to have dunder methods. Raising"
-                                 " an exception for your safety")
+            _DunderChecker().visit(ast.parse(s))
             s = eval(s, {'cycler': cycler, '__builtins__': {}})
         except BaseException as e:
             raise ValueError("'%s' is not a valid cycler construction: %s" %
@@ -760,12 +758,11 @@ def validate_cycler(s):
     for prop in cycler_inst.keys:
         norm_prop = _prop_aliases.get(prop, prop)
         if norm_prop != prop and norm_prop in cycler_inst.keys:
-            raise ValueError("Cannot specify both '{0}' and alias '{1}'"
-                             " in the same prop_cycle".format(norm_prop, prop))
+            raise ValueError(f"Cannot specify both {norm_prop!r} and alias "
+                             f"{prop!r} in the same prop_cycle")
         if norm_prop in checker:
-            raise ValueError("Another property was already aliased to '{0}'."
-                             " Collision normalizing '{1}'.".format(norm_prop,
-                                                                    prop))
+            raise ValueError(f"Another property was already aliased to "
+                             f"{norm_prop!r}. Collision normalizing {prop!r}.")
         checker.update([norm_prop])
 
     # This is just an extra-careful check, just in case there is some
@@ -917,7 +914,7 @@ _validators = {
     "font.family":     validate_stringlist,  # used by text object
     "font.style":      validate_string,
     "font.variant":    validate_string,
-    "font.stretch":    validate_string,
+    "font.stretch":    validate_fontstretch,
     "font.weight":     validate_fontweight,
     "font.size":       validate_float,  # Base font size in points
     "font.serif":      validate_stringlist,
@@ -935,6 +932,7 @@ _validators = {
     "text.hinting_factor": validate_int,
     "text.kerning_factor": validate_int,
     "text.antialiased":    validate_bool,
+    "text.parse_math":     validate_bool,
 
     "mathtext.cal":            validate_font_properties,
     "mathtext.rm":             validate_font_properties,
@@ -1034,10 +1032,9 @@ _validators = {
     "date.autoformatter.second":      validate_string,
     "date.autoformatter.microsecond": validate_string,
 
-    # 'auto', 'concise', 'auto-noninterval'
-    'date.converter': _validate_date_converter,
+    'date.converter':          ['auto', 'concise'],
     # for auto date locator, choose interval_multiples
-    'date.interval_multiples': _validate_date_int_mult,
+    'date.interval_multiples': validate_bool,
 
     # legend properties
     "legend.fancybox": validate_bool,

@@ -10,7 +10,7 @@ import pytest
 import matplotlib as mpl
 from matplotlib.testing.decorators import check_figures_equal, image_comparison
 import matplotlib.pyplot as plt
-from matplotlib import _api, mathtext
+from matplotlib import mathtext, _mathtext
 
 
 # If test is removed, use None as placeholder
@@ -103,13 +103,13 @@ math_tests = [
     r"$\left\Vert a \right\Vert \left\vert b \right\vert \left| a \right| \left\| b\right\| \Vert a \Vert \vert b \vert$",
     r'$\mathring{A}  \AA$',
     r'$M \, M \thinspace M \/ M \> M \: M \; M \ M \enspace M \quad M \qquad M \! M$',
-    r'$\Cup$ $\Cap$ $\leftharpoonup$ $\barwedge$ $\rightharpoonup$',
+    r'$\Cap$ $\Cup$ $\leftharpoonup$ $\barwedge$ $\rightharpoonup$',
     r'$\dotplus$ $\doteq$ $\doteqdot$ $\ddots$',
     r'$xyz^kx_kx^py^{p-2} d_i^jb_jc_kd x^j_i E^0 E^0_u$',  # github issue #4873
     r'${xyz}^k{x}_{k}{x}^{p}{y}^{p-2} {d}_{i}^{j}{b}_{j}{c}_{k}{d} {x}^{j}_{i}{E}^{0}{E}^0_u$',
     r'${\int}_x^x x\oint_x^x x\int_{X}^{X}x\int_x x \int^x x \int_{x} x\int^{x}{\int}_{x} x{\int}^{x}_{x}x$',
     r'testing$^{123}$',
-    ' '.join('$\\' + p + '$' for p in sorted(mathtext.Parser._accentprefixed)),
+    ' '.join('$\\' + p + '$' for p in sorted(_mathtext.Parser._accentprefixed)),
     r'$6-2$; $-2$; $ -2$; ${-2}$; ${  -2}$; $20^{+3}_{-2}$',
     r'$\overline{\omega}^x \frac{1}{2}_0^x$',  # github issue #5444
     r'$,$ $.$ $1{,}234{, }567{ , }890$ and $1,234,567,890$',  # github issue 5799
@@ -250,11 +250,18 @@ def test_fontinfo():
         (r'$\leftF$', r'Expected a delimiter'),
         (r'$\rightF$', r'Unknown symbol: \rightF'),
         (r'$\left(\right$', r'Expected a delimiter'),
-        (r'$\left($', r'Expected "\right"'),
+        # PyParsing 2 uses double quotes, PyParsing 3 uses single quotes and an
+        # extra backslash.
+        (r'$\left($', re.compile(r'Expected ("|\'\\)\\right["\']')),
         (r'$\dfrac$', r'Expected \dfrac{num}{den}'),
         (r'$\dfrac{}{}$', r'Expected \dfrac{num}{den}'),
         (r'$\overset$', r'Expected \overset{body}{annotation}'),
         (r'$\underset$', r'Expected \underset{body}{annotation}'),
+        (r'$\foo$', r'Unknown symbol: \foo'),
+        (r'$a^2^2$', r'Double superscript'),
+        (r'$a_2_2$', r'Double subscript'),
+        (r'$a^2_a^2$', r'Subscript/superscript sequence is too long.'\
+            r' Use braces { } to remove ambiguity.'),
     ],
     ids=[
         'hspace without value',
@@ -277,13 +284,22 @@ def test_fontinfo():
         'dfrac with empty parameters',
         'overset without parameters',
         'underset without parameters',
+        'unknown symbol',
+        'double superscript',
+        'double subscript',
+        'super on sub without braces'
     ]
 )
 def test_mathtext_exceptions(math, msg):
     parser = mathtext.MathTextParser('agg')
-
-    with pytest.raises(ValueError, match=re.escape(msg)):
+    match = re.escape(msg) if isinstance(msg, str) else msg
+    with pytest.raises(ValueError, match=match):
         parser.parse(math)
+
+
+def test_get_unicode_index_exception():
+    with pytest.raises(ValueError):
+        _mathtext.get_unicode_index(r'\foo')
 
 
 def test_single_minus_sign():
@@ -371,13 +387,7 @@ def test_mathtext_fallback(fallback, fontlist):
 def test_math_to_image(tmpdir):
     mathtext.math_to_image('$x^2$', str(tmpdir.join('example.png')))
     mathtext.math_to_image('$x^2$', io.BytesIO())
-
-
-def test_mathtext_to_png(tmpdir):
-    with _api.suppress_matplotlib_deprecation_warning():
-        mt = mathtext.MathTextParser('bitmap')
-        mt.to_png(str(tmpdir.join('example.png')), '$x^2$')
-        mt.to_png(io.BytesIO(), '$x^2$')
+    mathtext.math_to_image('$x^2$', io.BytesIO(), color='Maroon')
 
 
 @image_comparison(baseline_images=['math_fontfamily_image.png'],
@@ -402,7 +412,7 @@ def test_default_math_fontfamily():
     prop2 = text2.get_fontproperties()
     assert prop2.get_math_fontfamily() == 'cm'
 
-    fig.draw_no_output()
+    fig.draw_without_rendering()
 
 
 def test_argument_order():
@@ -427,7 +437,7 @@ def test_argument_order():
     prop4 = text4.get_fontproperties()
     assert prop4.get_math_fontfamily() == 'dejavusans'
 
-    fig.draw_no_output()
+    fig.draw_without_rendering()
 
 
 def test_mathtext_cmr10_minus_sign():
@@ -437,6 +447,5 @@ def test_mathtext_cmr10_minus_sign():
     mpl.rcParams['axes.formatter.use_mathtext'] = True
     fig, ax = plt.subplots()
     ax.plot(range(-1, 1), range(-1, 1))
-    with pytest.warns(None) as record:
-        fig.canvas.draw()
-    assert len(record) == 0, "\n".join(str(e.message) for e in record)
+    # draw to make sure we have no warnings
+    fig.canvas.draw()

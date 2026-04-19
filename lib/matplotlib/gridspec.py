@@ -5,8 +5,10 @@ r"""
 The `GridSpec` specifies the overall grid structure. Individual cells within
 the grid are referenced by `SubplotSpec`\s.
 
-See the tutorial :doc:`/tutorials/intermediate/gridspec` for a comprehensive
-usage guide.
+Often, users need not access this module directly, and can use higher-level
+methods like `~.pyplot.subplots`, `~.pyplot.subplot_mosaic` and
+`~.Figure.subfigures`. See the tutorial
+:doc:`/tutorials/intermediate/arranging_axes` for a guide.
 """
 
 import copy
@@ -16,10 +18,8 @@ from numbers import Integral
 import numpy as np
 
 import matplotlib as mpl
-from matplotlib import _api, _pylab_helpers, tight_layout, rcParams
+from matplotlib import _api, _pylab_helpers, _tight_layout, rcParams
 from matplotlib.transforms import Bbox
-import matplotlib._layoutgrid as layoutgrid
-
 
 _log = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class GridSpecBase:
             relative width of ``width_ratios[i] / sum(width_ratios)``.
             If not given, all columns will have the same width.
         height_ratios : array-like of length *nrows*, optional
-            Defines the relative heights of the rows. Each column gets a
+            Defines the relative heights of the rows. Each row gets a
             relative height of ``height_ratios[i] / sum(height_ratios)``.
             If not given, all rows will have the same height.
         """
@@ -308,13 +308,12 @@ class GridSpecBase:
                     self[row, col], **subplot_kw)
 
         # turn off redundant tick labeling
-        if all(ax.name == "rectilinear" for ax in axarr.flat):
-            if sharex in ["col", "all"]:
-                for ax in axarr.flat:
-                    ax._label_outer_xaxis()
-            if sharey in ["row", "all"]:
-                for ax in axarr.flat:
-                    ax._label_outer_yaxis()
+        if sharex in ["col", "all"]:
+            for ax in axarr.flat:
+                ax._label_outer_xaxis(check_patch=True)
+        if sharey in ["row", "all"]:
+            for ax in axarr.flat:
+                ax._label_outer_yaxis(check_patch=True)
 
         if squeeze:
             # Discarding unneeded dimensions that equal 1.  If we only have one
@@ -332,6 +331,8 @@ class GridSpec(GridSpecBase):
     The location of the grid cells is determined in a similar way to
     `~.figure.SubplotParams` using *left*, *right*, *top*, *bottom*, *wspace*
     and *hspace*.
+
+    Indexing a GridSpec instance returns a `.SubplotSpec`.
     """
     def __init__(self, nrows, ncols, figure=None,
                  left=None, bottom=None, right=None, top=None,
@@ -343,7 +344,7 @@ class GridSpec(GridSpecBase):
         nrows, ncols : int
             The number of rows and columns of the grid.
 
-        figure : `~.figure.Figure`, optional
+        figure : `.Figure`, optional
             Only used for constrained layout to create a proper layoutgrid.
 
         left, right, top, bottom : float, optional
@@ -370,7 +371,7 @@ class GridSpec(GridSpecBase):
             If not given, all columns will have the same width.
 
         height_ratios : array-like of length *nrows*, optional
-            Defines the relative heights of the rows. Each column gets a
+            Defines the relative heights of the rows. Each row gets a
             relative height of ``height_ratios[i] / sum(height_ratios)``.
             If not given, all rows will have the same height.
 
@@ -387,24 +388,7 @@ class GridSpec(GridSpecBase):
                          width_ratios=width_ratios,
                          height_ratios=height_ratios)
 
-        # set up layoutgrid for constrained_layout:
-        self._layoutgrid = None
-        if self.figure is None or not self.figure.get_constrained_layout():
-            self._layoutgrid = None
-        else:
-            self._toplayoutbox = self.figure._layoutgrid
-            self._layoutgrid = layoutgrid.LayoutGrid(
-                parent=self.figure._layoutgrid,
-                parent_inner=True,
-                name=(self.figure._layoutgrid.name + '.gridspec' +
-                      layoutgrid.seq_id()),
-                ncols=ncols, nrows=nrows, width_ratios=width_ratios,
-                height_ratios=height_ratios)
-
     _AllowedKeys = ["left", "bottom", "right", "top", "wspace", "hspace"]
-
-    def __getstate__(self):
-        return {**self.__dict__, "_layoutgrid": None}
 
     def update(self, **kwargs):
         """
@@ -482,7 +466,7 @@ class GridSpec(GridSpecBase):
             fit into.
         """
 
-        subplotspec_list = tight_layout.get_subplotspec_list(
+        subplotspec_list = _tight_layout.get_subplotspec_list(
             figure.axes, grid_spec=self)
         if None in subplotspec_list:
             _api.warn_external("This figure includes Axes that are not "
@@ -490,9 +474,9 @@ class GridSpec(GridSpecBase):
                                "might be incorrect.")
 
         if renderer is None:
-            renderer = tight_layout.get_renderer(figure)
+            renderer = _tight_layout.get_renderer(figure)
 
-        kwargs = tight_layout.get_tight_layout_figure(
+        kwargs = _tight_layout.get_tight_layout_figure(
             figure, figure.axes, subplotspec_list, renderer,
             pad=pad, h_pad=h_pad, w_pad=w_pad, rect=rect)
         if kwargs:
@@ -509,11 +493,19 @@ class GridSpecFromSubplotSpec(GridSpecBase):
                  wspace=None, hspace=None,
                  height_ratios=None, width_ratios=None):
         """
-        The number of rows and number of columns of the grid need to
-        be set. An instance of SubplotSpec is also needed to be set
-        from which the layout parameters will be inherited. The wspace
-        and hspace of the layout can be optionally specified or the
-        default values (from the figure or rcParams) will be used.
+        Parameters
+        ----------
+        nrows, ncols : int
+            Number of rows and number of columns of the grid.
+        subplot_spec : SubplotSpec
+            Spec from which the layout parameters are inherited.
+        wspace, hspace : float, optional
+            See `GridSpec` for more details. If not specified default values
+            (from the figure or rcParams) are used.
+        height_ratios : array-like of length *nrows*, optional
+            See `GridSpecBase` for details.
+        width_ratios : array-like of length *ncols*, optional
+            See `GridSpecBase` for details.
         """
         self._wspace = wspace
         self._hspace = hspace
@@ -522,26 +514,6 @@ class GridSpecFromSubplotSpec(GridSpecBase):
         super().__init__(nrows, ncols,
                          width_ratios=width_ratios,
                          height_ratios=height_ratios)
-        # do the layoutgrids for constrained_layout:
-        subspeclb = subplot_spec.get_gridspec()._layoutgrid
-        if subspeclb is None:
-            self._layoutgrid = None
-        else:
-            # this _toplayoutbox is a container that spans the cols and
-            # rows in the parent gridspec.  Not yet implemented,
-            # but we do this so that it is possible to have subgridspec
-            # level artists.
-            self._toplayoutgrid = layoutgrid.LayoutGrid(
-                parent=subspeclb,
-                name=subspeclb.name + '.top' + layoutgrid.seq_id(),
-                nrows=1, ncols=1,
-                parent_pos=(subplot_spec.rowspan, subplot_spec.colspan))
-            self._layoutgrid = layoutgrid.LayoutGrid(
-                    parent=self._toplayoutgrid,
-                    name=(self._toplayoutgrid.name + '.gridspec' +
-                          layoutgrid.seq_id()),
-                    nrows=nrows, ncols=ncols,
-                    width_ratios=width_ratios, height_ratios=height_ratios)
 
     def get_subplot_params(self, figure=None):
         """Return a dictionary of subplot layout parameters."""
@@ -650,9 +622,6 @@ class SubplotSpec:
     @num2.setter
     def num2(self, value):
         self._num2 = value
-
-    def __getstate__(self):
-        return {**self.__dict__}
 
     def get_gridspec(self):
         return self._gridspec

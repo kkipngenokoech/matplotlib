@@ -3,13 +3,14 @@ Helper functions for managing the Matplotlib API.
 
 This documentation is only relevant for Matplotlib developers, not for users.
 
-.. warning:
+.. warning::
 
     This module and its submodules are for internal use only.  Do not use them
     in your own code.  We may change the API at any time with no warning.
 
 """
 
+import functools
 import itertools
 import re
 import sys
@@ -189,6 +190,96 @@ def check_getitem(_mapping, **kwargs):
             .format(v, k, ', '.join(map(repr, mapping)))) from None
 
 
+def caching_module_getattr(cls):
+    """
+    Helper decorator for implementing module-level ``__getattr__`` as a class.
+
+    This decorator must be used at the module toplevel as follows::
+
+        @caching_module_getattr
+        class __getattr__:  # The class *must* be named ``__getattr__``.
+            @property  # Only properties are taken into account.
+            def name(self): ...
+
+    The ``__getattr__`` class will be replaced by a ``__getattr__``
+    function such that trying to access ``name`` on the module will
+    resolve the corresponding property (which may be decorated e.g. with
+    ``_api.deprecated`` for deprecating module globals).  The properties are
+    all implicitly cached.  Moreover, a suitable AttributeError is generated
+    and raised if no property with the given name exists.
+    """
+
+    assert cls.__name__ == "__getattr__"
+    # Don't accidentally export cls dunders.
+    props = {name: prop for name, prop in vars(cls).items()
+             if isinstance(prop, property)}
+    instance = cls()
+
+    @functools.lru_cache(None)
+    def __getattr__(name):
+        if name in props:
+            return props[name].__get__(instance)
+        raise AttributeError(
+            f"module {cls.__module__!r} has no attribute {name!r}")
+
+    return __getattr__
+
+
+def define_aliases(alias_d, cls=None):
+    """
+    Class decorator for defining property aliases.
+
+    Use as ::
+
+        @_api.define_aliases({"property": ["alias", ...], ...})
+        class C: ...
+
+    For each property, if the corresponding ``get_property`` is defined in the
+    class so far, an alias named ``get_alias`` will be defined; the same will
+    be done for setters.  If neither the getter nor the setter exists, an
+    exception will be raised.
+
+    The alias map is stored as the ``_alias_map`` attribute on the class and
+    can be used by `.normalize_kwargs` (which assumes that higher priority
+    aliases come last).
+    """
+    if cls is None:  # Return the actual class decorator.
+        return functools.partial(define_aliases, alias_d)
+
+    def make_alias(name):  # Enforce a closure over *name*.
+        @functools.wraps(getattr(cls, name))
+        def method(self, *args, **kwargs):
+            return getattr(self, name)(*args, **kwargs)
+        return method
+
+    for prop, aliases in alias_d.items():
+        exists = False
+        for prefix in ["get_", "set_"]:
+            if prefix + prop in vars(cls):
+                exists = True
+                for alias in aliases:
+                    method = make_alias(prefix + prop)
+                    method.__name__ = prefix + alias
+                    method.__doc__ = "Alias for `{}`.".format(prefix + prop)
+                    setattr(cls, prefix + alias, method)
+        if not exists:
+            raise ValueError(
+                "Neither getter nor setter exists for {!r}".format(prop))
+
+    def get_aliased_and_aliases(d):
+        return {*d, *(alias for aliases in d.values() for alias in aliases)}
+
+    preexisting_aliases = getattr(cls, "_alias_map", {})
+    conflicting = (get_aliased_and_aliases(preexisting_aliases)
+                   & get_aliased_and_aliases(alias_d))
+    if conflicting:
+        # Need to decide on conflict resolution policy.
+        raise NotImplementedError(
+            f"Parent class already defines conflicting aliases: {conflicting}")
+    cls._alias_map = {**preexisting_aliases, **alias_d}
+    return cls
+
+
 def select_matching_signature(funcs, *args, **kwargs):
     """
     Select and call the function that accepts ``*args, **kwargs``.
@@ -239,6 +330,13 @@ def select_matching_signature(funcs, *args, **kwargs):
         except TypeError:
             if i == len(funcs) - 1:
                 raise
+
+
+def recursive_subclasses(cls):
+    """Yield *cls* and direct and indirect subclasses of *cls*."""
+    yield cls
+    for subcls in cls.__subclasses__():
+        yield from recursive_subclasses(subcls)
 
 
 def warn_external(message, category=None):

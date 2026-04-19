@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.transforms as mtransforms
 import matplotlib.collections as mcollections
+import matplotlib.lines as mlines
 from matplotlib.legend_handler import HandlerTuple
 import matplotlib.legend as mlegend
 from matplotlib import rc_context
@@ -75,6 +76,20 @@ def test_various_labels():
     ax.plot(np.linspace(4, 4.1), 'o', label='Développés')
     ax.plot(np.arange(4, 1, -1), 'o', label='__nolegend__')
     ax.legend(numpoints=1, loc='best')
+
+
+def test_legend_label_with_leading_underscore():
+    """
+    Test that artists with labels starting with an underscore are not added to
+    the legend, and that a warning is issued if one tries to add them
+    explicitly.
+    """
+    fig, ax = plt.subplots()
+    line, = ax.plot([0, 1], label='_foo')
+    with pytest.warns(UserWarning,
+                      match=r"starts with '_'.*excluded from the legend."):
+        legend = ax.legend(handles=[line])
+    assert len(legend.legendHandles) == 0
 
 
 @image_comparison(['legend_labels_first.png'], remove_text=True)
@@ -480,8 +495,7 @@ def test_linecollection_scaled_dashes():
     h1, h2, h3 = leg.legendHandles
 
     for oh, lh in zip((lc1, lc2, lc3), (h1, h2, h3)):
-        assert oh.get_linestyles()[0][1] == lh._dashSeq
-        assert oh.get_linestyles()[0][0] == lh._dashOffset
+        assert oh.get_linestyles()[0] == lh._dash_pattern
 
 
 def test_handler_numpoints():
@@ -490,6 +504,15 @@ def test_handler_numpoints():
     fig, ax = plt.subplots()
     ax.plot(range(5), label='test')
     ax.legend(numpoints=0.5)
+
+
+def test_text_nohandler_warning():
+    """Test that Text artists with labels raise a warning"""
+    fig, ax = plt.subplots()
+    ax.text(x=0, y=0, s="text", label="label")
+    with pytest.warns(UserWarning) as record:
+        ax.legend()
+    assert len(record) == 1
 
 
 def test_empty_bar_chart_with_legend():
@@ -861,3 +884,29 @@ def test_legend_text_axes():
 
     assert leg.axes is ax
     assert leg.get_texts()[0].axes is ax
+
+
+def test_handlerline2d():
+    # Test marker consistency for monolithic Line2D legend handler (#11357).
+    fig, ax = plt.subplots()
+    ax.scatter([0, 1], [0, 1], marker="v")
+    handles = [mlines.Line2D([0], [0], marker="v")]
+    leg = ax.legend(handles, ["Aardvark"], numpoints=1)
+    assert handles[0].get_marker() == leg.legendHandles[0].get_marker()
+
+
+def test_subfigure_legend():
+    # Test that legend can be added to subfigure (#20723)
+    subfig = plt.figure().subfigures()
+    ax = subfig.subplots()
+    ax.plot([0, 1], [0, 1], label="line")
+    leg = subfig.legend()
+    assert leg.figure is subfig
+
+
+def test_setting_alpha_keeps_polycollection_color():
+    pc = plt.fill_between([0, 1], [2, 3], color='#123456', label='label')
+    patch = plt.legend().get_patches()[0]
+    patch.set_alpha(0.5)
+    assert patch.get_facecolor()[:3] == tuple(pc.get_facecolor()[0][:3])
+    assert patch.get_edgecolor()[:3] == tuple(pc.get_edgecolor()[0][:3])

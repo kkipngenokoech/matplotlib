@@ -191,52 +191,39 @@ int convert_rect(PyObject *rectobj, void *rectp)
 int convert_rgba(PyObject *rgbaobj, void *rgbap)
 {
     agg::rgba *rgba = (agg::rgba *)rgbap;
-
+    PyObject *rgbatuple = NULL;
+    int success = 1;
     if (rgbaobj == NULL || rgbaobj == Py_None) {
         rgba->r = 0.0;
         rgba->g = 0.0;
         rgba->b = 0.0;
         rgba->a = 0.0;
     } else {
+        if (!(rgbatuple = PySequence_Tuple(rgbaobj))) {
+            success = 0;
+            goto exit;
+        }
         rgba->a = 1.0;
         if (!PyArg_ParseTuple(
-                 rgbaobj, "ddd|d:rgba", &(rgba->r), &(rgba->g), &(rgba->b), &(rgba->a))) {
-            return 0;
+                 rgbatuple, "ddd|d:rgba", &(rgba->r), &(rgba->g), &(rgba->b), &(rgba->a))) {
+            success = 0;
+            goto exit;
         }
     }
-
-    return 1;
+exit:
+    Py_XDECREF(rgbatuple);
+    return success;
 }
 
 int convert_dashes(PyObject *dashobj, void *dashesp)
 {
     Dashes *dashes = (Dashes *)dashesp;
 
-    if (dashobj == NULL && dashobj == Py_None) {
-        return 1;
-    }
-
-    PyObject *dash_offset_obj = NULL;
     double dash_offset = 0.0;
     PyObject *dashes_seq = NULL;
 
-    if (!PyArg_ParseTuple(dashobj, "OO:dashes", &dash_offset_obj, &dashes_seq)) {
+    if (!PyArg_ParseTuple(dashobj, "dO:dashes", &dash_offset, &dashes_seq)) {
         return 0;
-    }
-
-    if (dash_offset_obj != Py_None) {
-        dash_offset = PyFloat_AsDouble(dash_offset_obj);
-        if (PyErr_Occurred()) {
-            return 0;
-        }
-    } else {
-        if (PyErr_WarnEx(PyExc_FutureWarning,
-                         "Passing the dash offset as None is deprecated since "
-                         "Matplotlib 3.3 and will be removed in Matplotlib 3.5; "
-                         "pass it as zero instead.",
-                         1)) {
-            return 0;
-        }
     }
 
     if (dashes_seq == Py_None) {

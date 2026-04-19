@@ -3,7 +3,8 @@
 Pyplot tutorial
 ===============
 
-An introduction to the pyplot interface.
+An introduction to the pyplot interface.  Please also see
+:doc:`/tutorials/introductory/quick_start` for an overview of how Matplotlib works.
 """
 
 ###############################################################################
@@ -77,7 +78,7 @@ plt.show()
 #
 # If matplotlib were limited to working with lists, it would be fairly
 # useless for numeric processing.  Generally, you will use `numpy
-# <http://www.numpy.org>`_ arrays.  In fact, all sequences are
+# <https://numpy.org/>`_ arrays.  In fact, all sequences are
 # converted to numpy arrays internally.  The example below illustrates
 # plotting several lines with different format styles in one function call
 # using arrays.
@@ -259,7 +260,7 @@ plt.show()
 
 ###############################################################################
 # The `~.pyplot.figure` call here is optional because a figure will be created
-# if none exists, just as an axes will be created (equivalent to an explicit
+# if none exists, just as an Axes will be created (equivalent to an explicit
 # ``subplot()`` call) if none exists.
 # The `~.pyplot.subplot` call specifies ``numrows,
 # numcols, plot_number`` where ``plot_number`` ranges from 1 to
@@ -268,7 +269,7 @@ plt.show()
 # to ``subplot(2, 1, 1)``.
 #
 # You can create an arbitrary number of subplots
-# and axes.  If you want to place an axes manually, i.e., not on a
+# and axes.  If you want to place an Axes manually, i.e., not on a
 # rectangular grid, use `~.pyplot.axes`,
 # which allows you to specify the location as ``axes([left, bottom,
 # width, height])`` where all values are in fractional (0 to 1)

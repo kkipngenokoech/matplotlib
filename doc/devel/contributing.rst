@@ -7,7 +7,7 @@ Contributing
 This project is a community effort, and everyone is welcome to
 contribute. Everyone within the community
 is expected to abide by our
-`code of conduct <https://github.com/matplotlib/matplotlib/blob/master/CODE_OF_CONDUCT.md>`_.
+`code of conduct <https://github.com/matplotlib/matplotlib/blob/main/CODE_OF_CONDUCT.md>`_.
 
 The project is hosted on
 https://github.com/matplotlib/matplotlib
@@ -39,6 +39,16 @@ the internals of Matplotlib. The issues may additionally be tagged with a
 difficulty. ``Difficulty: Easy`` is suited for people with little Python experience.
 ``Difficulty: Medium`` and ``Difficulty: Hard`` are not trivial to solve and
 require more thought and programming experience.
+
+In general, the Matplotlib project does not assign issues. Issues are 
+"assigned" or "claimed" by opening a PR; there is no other assignment 
+mechanism. If you have opened such a PR, please comment on the issue thread to 
+avoid duplication of work. Please check if there is an existing PR for the 
+issue you are addressing. If there is, try to work with the author by 
+submitting reviews of their code or commenting on the PR rather than opening 
+a new PR; duplicate PRs are subject to being closed.  However, if the existing 
+PR is an outline, unlikely to work, or stalled, and the original author is 
+unresponsive, feel free to open a new PR referencing the old one. 
 
 .. _submitting-a-bug-report:
 
@@ -73,7 +83,7 @@ If you are reporting a bug, please do your best to include the following:
       >>> platform.python_version()
       '3.9.2'
 
-We have preloaded the issue creation page with a Markdown template that you can
+We have preloaded the issue creation page with a Markdown form that you can
 use to organize this information.
 
 Thank you for your help in keeping bug reports complete, targeted and descriptive.
@@ -119,13 +129,13 @@ A brief overview is:
       git clone https://github.com/<YOUR GITHUB USERNAME>/matplotlib.git
 
 4. Enter the directory and install the local version of Matplotlib.
-   See ref`<installing_for_devs>` for instructions
+   See :ref:`installing_for_devs` for instructions
 
 5. Create a branch to hold your changes::
 
-      git checkout -b my-feature origin/master
+      git checkout -b my-feature origin/main
 
-   and start making changes. Never work in the ``master`` branch!
+   and start making changes. Never work in the ``main`` branch!
 
 6. Work on this copy, on your computer, using Git to do the version control.
    When you're done editing e.g., ``lib/matplotlib/collections.py``, do::
@@ -142,7 +152,7 @@ Finally, go to the web page of your fork of the Matplotlib repo, and click
 
 .. seealso::
 
-  * `Git documentation <https://git-scm.com/documentation>`_
+  * `Git documentation <https://git-scm.com/doc>`_
   * `Git-Contributing to a Project <https://git-scm.com/book/en/v2/GitHub-Contributing-to-a-Project>`_
   * `Introduction to GitHub  <https://lab.github.com/githubtraining/introduction-to-github>`_
   * :ref:`development-workflow` for best practices for Matplotlib
@@ -265,7 +275,7 @@ Other ways to contribute
 It also helps us if you spread the word: reference the project from your blog
 and articles or link to it from your website!  If Matplotlib contributes to a
 project that leads to a scientific publication, please follow the
-:doc:`/citing` guidelines.
+:doc:`/users/project/citing` guidelines.
 
 .. _coding_guidelines:
 
@@ -275,30 +285,60 @@ Coding guidelines
 API changes
 -----------
 
-Changes to the public API must follow a standard deprecation procedure to
-prevent unexpected breaking of code that uses Matplotlib.
+API consistency and stability are of great value. Therefore, API changes
+(e.g. signature changes, behavior changes, removals) will only be conducted
+if the added benefit is worth the user effort for adapting.
 
-- Deprecations must be announced via a new file in
-  a new file in :file:`doc/api/next_api_changes/deprecations/` with
-  naming convention ``99999-ABC.rst`` where ``99999`` is the pull request
-  number and ``ABC`` are the contributor's initials.
-- Deprecations are targeted at the next point-release (i.e. 3.x.0).
-- The deprecated API should, to the maximum extent possible, remain fully
-  functional during the deprecation period. In cases where this is not
-  possible, the deprecation must never make a given piece of code do something
-  different than it was before; at least an exception should be raised.
-- If possible, usage of an deprecated API should emit a
-  `.MatplotlibDeprecationWarning`. There are a number of helper tools for this:
+API changes in Matplotlib have to be performed following the deprecation process
+below, except in very rare circumstances as deemed necessary by the development team.
+This ensures that users are notified before the change will take effect and thus
+prevents unexpected breaking of code.
 
-  - Use ``cbook.warn_deprecated()`` for general deprecation warnings.
-  - Use the decorator ``@cbook.deprecated`` to deprecate classes, functions,
-    methods, or properties.
-  - To warn on changes of the function signature, use the decorators
-    ``@cbook._delete_parameter``, ``@cbook._rename_parameter``, and
-    ``@cbook._make_keyword_only``.
+Rules
+~~~~~
 
-- Deprecated API may be removed two point-releases after they were deprecated.
+- Deprecations are targeted at the next point.release (e.g. 3.x)
+- Deprecated API is generally removed two two point-releases after introduction
+  of the deprecation. Longer deprecations can be imposed by core developers on
+  a case-by-case basis to give more time for the transition
+- The old API must remain fully functional during the deprecation period
+- If alternatives to the deprecated API exist, they should be available
+  during the deprecation period
+- If in doubt, decisions about API changes are finally made by the
+  API consistency lead developer
 
+Introducing
+~~~~~~~~~~~
+
+1. Announce the deprecation in a new file
+   :file:`doc/api/next_api_changes/deprecations/99999-ABC.rst` where ``99999``
+   is the pull request number and ``ABC`` are the contributor's initials.
+2. If possible, issue a `.MatplotlibDeprecationWarning` when the deprecated
+   API is used. There are a number of helper tools for this:
+
+   - Use ``_api.warn_deprecated()`` for general deprecation warnings
+   - Use the decorator ``@_api.deprecated`` to deprecate classes, functions,
+     methods, or properties
+   - To warn on changes of the function signature, use the decorators
+     ``@_api.delete_parameter``, ``@_api.rename_parameter``, and
+     ``@_api.make_keyword_only``
+
+   All these helpers take a first parameter *since*, which should be set to
+   the next point release, e.g. "3.x".
+
+   You can use standard rst cross references in *alternative*.
+
+Expiring
+~~~~~~~~
+
+1. Announce the API changes in a new file
+   :file:`doc/api/next_api_changes/[kind]/99999-ABC.rst` where ``99999``
+   is the pull request number and ``ABC`` are the contributor's initials, and
+   ``[kind]`` is one of the folders :file:`behavior`, :file:`development`,
+   :file:`removals`. See :file:`doc/api/next_api_changes/README.rst` for more
+   information. For the content, you can usually copy the deprecation notice
+   and adapt it slightly.
+2. Change the code functionality and remove any related deprecation warnings.
 
 Adding new API
 --------------
@@ -343,28 +383,33 @@ C/C++ extensions
   docstrings, and the Numpydoc format is well understood in the
   scientific Python community.
 
+* C/C++ code in the :file:`extern/` directory is vendored, and should be kept
+  close to upstream whenever possible.  It can be modified to fix bugs or
+  implement new features only if the required changes cannot be made elsewhere
+  in the codebase.  In particular, avoid making style fixes to it.
+
 .. _keyword-argument-processing:
 
 Keyword argument processing
 ---------------------------
 
 Matplotlib makes extensive use of ``**kwargs`` for pass-through customizations
-from one function to another. A typical example is in `matplotlib.pyplot.text`.
-The definition of the pylab text function is a simple pass-through to
-`matplotlib.axes.Axes.text`::
+from one function to another.  A typical example is
+`~matplotlib.axes.Axes.text`.  The definition of `matplotlib.pyplot.text` is a
+simple pass-through to `matplotlib.axes.Axes.text`::
 
-  # in pylab.py
-  def text(*args, **kwargs):
-      return gca().text(*args, **kwargs)
+  # in pyplot.py
+  def text(x, y, s, fontdict=None, **kwargs):
+      return gca().text(x, y, s, fontdict=fontdict, **kwargs)
 
-`~matplotlib.axes.Axes.text` in simplified form looks like this, i.e., it just
+`matplotlib.axes.Axes.text` (simplified for illustration) just
 passes all ``args`` and ``kwargs`` on to ``matplotlib.text.Text.__init__``::
 
   # in axes/_axes.py
-  def text(self, x, y, s, fontdict=None, withdash=False, **kwargs):
+  def text(self, x, y, s, fontdict=None, **kwargs):
       t = Text(x=x, y=y, text=s, **kwargs)
 
-and ``matplotlib.text.Text.__init__`` (again with liberties for illustration)
+and ``matplotlib.text.Text.__init__`` (again, simplified)
 just passes them on to the `matplotlib.artist.Artist.update` method::
 
   # in text.py
@@ -435,11 +480,13 @@ or manually with ::
   logging.basicConfig(level=logging.DEBUG)
   import matplotlib.pyplot as plt
 
-Then they will receive messages like::
+Then they will receive messages like
 
-  DEBUG:matplotlib.backends:backend MacOSX version unknown
-  DEBUG:matplotlib.yourmodulename:Here is some information
-  DEBUG:matplotlib.yourmodulename:Here is some more detailed information
+.. code-block:: none
+
+   DEBUG:matplotlib.backends:backend MacOSX version unknown
+   DEBUG:matplotlib.yourmodulename:Here is some information
+   DEBUG:matplotlib.yourmodulename:Here is some more detailed information
 
 Which logging level to use?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -484,14 +531,14 @@ Matplotlib. For example, for the module::
         if bottom == top:
             warnings.warn('Attempting to set identical bottom==top')
 
-
 running the script::
 
     from matplotlib import my_matplotlib_module
-    my_matplotlib_module.set_range(0, 0)  #set range
+    my_matplotlib_module.set_range(0, 0)  # set range
 
+will display
 
-will display::
+.. code-block:: none
 
     UserWarning: Attempting to set identical bottom==top
     warnings.warn('Attempting to set identical bottom==top')
@@ -504,10 +551,12 @@ Modifying the module to use `._api.warn_external`::
         if bottom == top:
             _api.warn_external('Attempting to set identical bottom==top')
 
-and running the same script will display::
+and running the same script will display
 
-  UserWarning: Attempting to set identical bottom==top
-  my_matplotlib_module.set_range(0, 0)  #set range
+.. code-block:: none
+
+   UserWarning: Attempting to set identical bottom==top
+   my_matplotlib_module.set_range(0, 0)  # set range
 
 .. _logging tutorial: https://docs.python.org/3/howto/logging.html#logging-basic-tutorial
 

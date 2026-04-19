@@ -30,8 +30,7 @@ div.responsive_screenshots {
 }
 
 /* To avoid subfigure parts outside of the responsive_screenshots  */
-/* element (see: https://stackoverflow.com/questions/2062258/      */
-/* floating-stuff-within-a-div-floats-outside-of-div-why)          */
+/* element (see <https://stackoverflow.com/q/2062258/>)            */
 span.clear_screenshots { clear: left; display: block; }
 
 div.responsive_subfig{
@@ -205,11 +204,76 @@ does not float with it.
 */
 .sphx-glr-thumbcontainer p.caption:hover > a.headerlink{
     visibility: hidden;
-
 }
 
+/* slightly reduce horizontal margin compared to gallery.css to
+ * get four columns of thumbnails in the pydata-sphinx-theme. */
+.sphx-glr-thumbcontainer {
+    margin: 5px 2px;
+}
+
+/* workaround: the default padding decenters the image inside the frame */
+.sphx-glr-thumbcontainer .figure {
+    padding: 0;
+}
+
+/* hide note linking to the download section at the bottom of galleries
+ * as suggested in https://github.com/sphinx-gallery/sphinx-gallery/issues/760
+ */
+div.sphx-glr-download-link-note {
+    height: 0px;
+    visibility: hidden;
+}
+
+/* re-style the download button */
+div.sphx-glr-download a {
+    background-color: #E3F0F6;
+    background-image: none;
+    color: #11557c;
+    border: 0;
+}
+
+div.sphx-glr-download a:hover {
+    background-color: #BCD4DF;
+}
+
+/* Do not fold multiple figures in examples into two column layout. */
+img.sphx-glr-multi-img {
+    max-width: 100%;
+}
 
 table.property-table th,
 table.property-table td {
     padding: 4px 10px;
+}
+
+.sidebar-cheatsheets, .sidebar-donate {
+    margin: 2.75rem 0;
+}
+
+.sidebar-donate .mpl-button {
+    /* fix width to width of cheatsheet */
+    width: 210px;
+}
+
+/* Two columns for install code blocks */
+div.twocol {
+    padding-left: 0;
+    padding-right: 0;
+    display: flex;
+    gap: 20px;
+}
+
+div.twocol > div {
+    flex-grow: 1;
+    padding: 0;
+    margin: 0;
+}
+
+/* Fix selection of parameter names; remove when fixed in the theme
+ * https://github.com/sphinx-doc/sphinx/pull/9763
+ */
+.classifier:before {
+    display: inline-block;
+    margin: 0 0.5em;
 }

@@ -43,11 +43,16 @@ def test_font_styles():
         style="normal",
         variant="normal",
         size=14)
-    ax.annotate(
+    a = ax.annotate(
         "Normal Font",
         (0.1, 0.1),
         xycoords='axes fraction',
         fontproperties=normal_font)
+    assert a.get_fontname() == 'DejaVu Sans'
+    assert a.get_fontstyle() == 'normal'
+    assert a.get_fontvariant() == 'normal'
+    assert a.get_weight() == 'normal'
+    assert a.get_stretch() == 'normal'
 
     bold_font = find_matplotlib_font(
         family="Foo",
@@ -199,7 +204,7 @@ def test_antialiasing():
 def test_afm_kerning():
     fn = mpl.font_manager.findfont("Helvetica", fontext="afm")
     with open(fn, 'rb') as fh:
-        afm = mpl.afm.AFM(fh)
+        afm = mpl._afm.AFM(fh)
     assert afm.string_width_height('VAVAVAVAVAVA') == (7174.0, 718)
 
 
@@ -240,7 +245,7 @@ def test_annotation_contains():
     fig, ax = plt.subplots()
     ann = ax.annotate(
         "hello", xy=(.4, .4), xytext=(.6, .6), arrowprops={"arrowstyle": "->"})
-    fig.canvas.draw()   # Needed for the same reason as in test_contains.
+    fig.canvas.draw()  # Needed for the same reason as in test_contains.
     event = MouseEvent(
         "button_press_event", fig.canvas, *ax.transData.transform((.5, .6)))
     assert ann.contains(event) == (False, {})
@@ -340,33 +345,32 @@ def test_non_default_dpi(text):
 
 
 def test_get_rotation_string():
-    assert mpl.text.get_rotation('horizontal') == 0.
-    assert mpl.text.get_rotation('vertical') == 90.
-    assert mpl.text.get_rotation('15.') == 15.
+    assert Text(rotation='horizontal').get_rotation() == 0.
+    assert Text(rotation='vertical').get_rotation() == 90.
 
 
 def test_get_rotation_float():
     for i in [15., 16.70, 77.4]:
-        assert mpl.text.get_rotation(i) == i
+        assert Text(rotation=i).get_rotation() == i
 
 
 def test_get_rotation_int():
     for i in [67, 16, 41]:
-        assert mpl.text.get_rotation(i) == float(i)
+        assert Text(rotation=i).get_rotation() == float(i)
 
 
 def test_get_rotation_raises():
     with pytest.raises(ValueError):
-        mpl.text.get_rotation('hozirontal')
+        Text(rotation='hozirontal')
 
 
 def test_get_rotation_none():
-    assert mpl.text.get_rotation(None) == 0.0
+    assert Text(rotation=None).get_rotation() == 0.0
 
 
 def test_get_rotation_mod360():
     for i, j in zip([360., 377., 720+177.2], [0., 17., 177.2]):
-        assert_almost_equal(mpl.text.get_rotation(i), j)
+        assert_almost_equal(Text(rotation=i).get_rotation(), j)
 
 
 @pytest.mark.parametrize("ha", ["center", "right", "left"])
@@ -636,12 +640,12 @@ def test_large_subscript_title():
     ax = axs[0]
     ax.set_title(r'$\sum_{i} x_i$')
     ax.set_title('New way', loc='left')
-    ax.set_xticklabels('')
+    ax.set_xticklabels([])
 
     ax = axs[1]
     ax.set_title(r'$\sum_{i} x_i$', y=1.01)
     ax.set_title('Old Way', loc='left')
-    ax.set_xticklabels('')
+    ax.set_xticklabels([])
 
 
 def test_wrap():
@@ -711,6 +715,14 @@ def test_update_mutate_input():
     assert inp['bbox'] == cache['bbox']
 
 
+@pytest.mark.parametrize('rotation', ['invalid string', [90]])
+def test_invalid_rotation_values(rotation):
+    with pytest.raises(
+            ValueError,
+            match=("rotation must be 'vertical', 'horizontal' or a number")):
+        Text(0, 0, 'foo', rotation=rotation)
+
+
 def test_invalid_color():
     with pytest.raises(ValueError):
         plt.figtext(.5, .5, "foo", c="foobar")
@@ -741,3 +753,48 @@ def test_parse_math():
     ax.text(0, 0, r"$ \wrong{math} $", parse_math=True)
     with pytest.raises(ValueError, match='Unknown symbol'):
         fig.canvas.draw()
+
+
+def test_parse_math_rcparams():
+    # Default is True
+    fig, ax = plt.subplots()
+    ax.text(0, 0, r"$ \wrong{math} $")
+    with pytest.raises(ValueError, match='Unknown symbol'):
+        fig.canvas.draw()
+
+    # Setting rcParams to False
+    with mpl.rc_context({'text.parse_math': False}):
+        fig, ax = plt.subplots()
+        ax.text(0, 0, r"$ \wrong{math} $")
+        fig.canvas.draw()
+
+
+@image_comparison(['text_pdf_font42_kerning.pdf'], style='mpl20')
+def test_pdf_font42_kerning():
+    plt.rcParams['pdf.fonttype'] = 42
+    plt.figure()
+    plt.figtext(0.1, 0.5, "ATAVATAVATAVATAVATA", size=30)
+
+
+@image_comparison(['text_pdf_chars_beyond_bmp.pdf'], style='mpl20')
+def test_pdf_chars_beyond_bmp():
+    plt.rcParams['pdf.fonttype'] = 42
+    plt.rcParams['mathtext.fontset'] = 'stixsans'
+    plt.figure()
+    plt.figtext(0.1, 0.5, "Mass $m$ \U00010308", size=30)
+
+
+@needs_usetex
+def test_metrics_cache():
+    mpl.text._get_text_metrics_with_cache_impl.cache_clear()
+
+    fig = plt.figure()
+    fig.text(.3, .5, "foo\nbar")
+    fig.text(.5, .5, "foo\nbar")
+    fig.text(.3, .5, "foo\nbar", usetex=True)
+    fig.text(.5, .5, "foo\nbar", usetex=True)
+    fig.canvas.draw()
+
+    info = mpl.text._get_text_metrics_with_cache_impl.cache_info()
+    # Each string gets drawn twice, so the second draw results in a hit.
+    assert info.hits == info.misses

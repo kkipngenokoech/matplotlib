@@ -9,7 +9,8 @@
  * */
 
 const char* image_resample__doc__ =
-"resample(input_array, output_array, matrix, interpolation=NEAREST, alpha=1.0, norm=False, radius=1)\n\n"
+"resample(input_array, output_array, matrix, interpolation=NEAREST, alpha=1.0, norm=False, radius=1)\n"
+"--\n\n"
 
 "Resample input_array, blending it in-place into output_array, using an\n"
 "affine transformation.\n\n"
@@ -295,15 +296,7 @@ static PyMethodDef module_functions[] = {
 };
 
 static struct PyModuleDef moduledef = {
-    PyModuleDef_HEAD_INIT,
-    "_image",
-    NULL,
-    0,
-    module_functions,
-    NULL,
-    NULL,
-    NULL,
-    NULL
+    PyModuleDef_HEAD_INIT, "_image", NULL, 0, module_functions,
 };
 
 #pragma GCC visibility push(default)
@@ -311,6 +304,8 @@ static struct PyModuleDef moduledef = {
 PyMODINIT_FUNC PyInit__image(void)
 {
     PyObject *m;
+
+    import_array();
 
     m = PyModule_Create(&moduledef);
 
@@ -336,10 +331,9 @@ PyMODINIT_FUNC PyInit__image(void)
         PyModule_AddIntConstant(m, "LANCZOS", LANCZOS) ||
         PyModule_AddIntConstant(m, "BLACKMAN", BLACKMAN) ||
         PyModule_AddIntConstant(m, "_n_interpolation", _n_interpolation)) {
+        Py_DECREF(m);
         return NULL;
     }
-
-    import_array();
 
     return m;
 }

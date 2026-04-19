@@ -12,6 +12,7 @@ import numpy as np
 
 import matplotlib as mpl
 from . import _api, cbook
+from .cm import ScalarMappable
 from .path import Path
 from .transforms import (Bbox, IdentityTransform, Transform, TransformedBbox,
                          TransformedPatchPath, TransformedPath)
@@ -166,7 +167,7 @@ class Artist:
         # Normally, artist classes need to be queried for mouseover info if and
         # only if they override get_cursor_data.
         self._mouseover = type(self).get_cursor_data != Artist.get_cursor_data
-        self._callbacks = cbook.CallbackRegistry()
+        self._callbacks = cbook.CallbackRegistry(signals=["pchanged"])
         try:
             self.axes = None
         except AttributeError:
@@ -184,7 +185,7 @@ class Artist:
     def __getstate__(self):
         d = self.__dict__.copy()
         # remove the unpicklable remove method, this will get re-added on load
-        # (by the axes) if the artist lives on an axes.
+        # (by the Axes) if the artist lives on an Axes.
         d['stale_callback'] = None
         return d
 
@@ -214,10 +215,8 @@ class Artist:
             if hasattr(self, 'axes') and self.axes:
                 # remove from the mouse hit list
                 self.axes._mouseover_set.discard(self)
-                # mark the axes as stale
                 self.axes.stale = True
-                # decouple the artist from the axes
-                self.axes = None
+                self.axes = None  # decouple the artist from the Axes
                 _ax_flag = True
 
             if self.figure:
@@ -236,7 +235,7 @@ class Artist:
     def have_units(self):
         """Return whether units are set on any axis."""
         ax = self.axes
-        return ax and any(axis.have_units() for axis in ax._get_axis_list())
+        return ax and any(axis.have_units() for axis in ax._axis_map.values())
 
     def convert_xunits(self, x):
         """
@@ -301,7 +300,7 @@ class Artist:
 
     def get_window_extent(self, renderer):
         """
-        Get the axes bounding box in display space.
+        Get the artist's bounding box in display space.
 
         The bounding box' width and height are nonnegative.
 
@@ -318,23 +317,6 @@ class Artist:
         but will save incorrectly.
         """
         return Bbox([[0, 0], [0, 0]])
-
-    def _get_clipping_extent_bbox(self):
-        """
-        Return a bbox with the extents of the intersection of the clip_path
-        and clip_box for this artist, or None if both of these are
-        None, or ``get_clip_on`` is False.
-        """
-        bbox = None
-        if self.get_clip_on():
-            clip_box = self.get_clip_box()
-            if clip_box is not None:
-                bbox = clip_box
-            clip_path = self.get_clip_path()
-            if clip_path is not None and bbox is not None:
-                clip_path = clip_path.get_fully_transformed_path()
-                bbox = Bbox.intersection(bbox, clip_path.get_extents())
-        return bbox
 
     def get_tightbbox(self, renderer):
         """
@@ -357,7 +339,7 @@ class Artist:
             if clip_box is not None:
                 bbox = Bbox.intersection(bbox, clip_box)
             clip_path = self.get_clip_path()
-            if clip_path is not None and bbox is not None:
+            if clip_path is not None:
                 clip_path = clip_path.get_fully_transformed_path()
                 bbox = Bbox.intersection(bbox, clip_path.get_extents())
         return bbox
@@ -527,14 +509,14 @@ class Artist:
 
         # Pick children
         for a in self.get_children():
-            # make sure the event happened in the same axes
+            # make sure the event happened in the same Axes
             ax = getattr(a, 'axes', None)
             if (mouseevent.inaxes is None or ax is None
                     or mouseevent.inaxes == ax):
                 # we need to check if mouseevent.inaxes is None
-                # because some objects associated with an axes (e.g., a
+                # because some objects associated with an Axes (e.g., a
                 # tick label) can be outside the bounding box of the
-                # axes and inaxes will be None
+                # Axes and inaxes will be None
                 # also check that ax is None so that it traverse objects
                 # which do no have an axes property but children might
                 a.pick(mouseevent)
@@ -690,6 +672,9 @@ class Artist:
             The scale factor by which the length is shrunken or
             expanded (default 16.0)
 
+            The PGF backend uses this argument as an RNG seed and not as
+            described above. Using the same seed yields the same random shape.
+
             .. ACCEPTS: (scale: float, length: float, randomness: float)
         """
         if scale is None:
@@ -840,6 +825,30 @@ class Artist:
         """
         return self._in_layout
 
+    def _fully_clipped_to_axes(self):
+        """
+        Return a boolean flag, ``True`` if the artist is clipped to the Axes
+        and can thus be skipped in layout calculations. Requires `get_clip_on`
+        is True, one of `clip_box` or `clip_path` is set, ``clip_box.extents``
+        is equivalent to ``ax.bbox.extents`` (if set), and ``clip_path._patch``
+        is equivalent to ``ax.patch`` (if set).
+        """
+        # Note that ``clip_path.get_fully_transformed_path().get_extents()``
+        # cannot be directly compared to ``axes.bbox.extents`` because the
+        # extents may be undefined (i.e. equivalent to ``Bbox.null()``)
+        # before the associated artist is drawn, and this method is meant
+        # to determine whether ``axes.get_tightbbox()`` may bypass drawing
+        clip_box = self.get_clip_box()
+        clip_path = self.get_clip_path()
+        return (self.axes is not None
+                and self.get_clip_on()
+                and (clip_box is not None or clip_path is not None)
+                and (clip_box is None
+                     or np.all(clip_box.extents == self.axes.bbox.extents))
+                and (clip_path is None
+                     or isinstance(clip_path, TransformedPatchPath)
+                     and clip_path._patch is self.axes.patch))
+
     def get_clip_on(self):
         """Return whether the artist uses clipping."""
         return self._clipon
@@ -866,7 +875,7 @@ class Artist:
         """
         Set whether the artist uses clipping.
 
-        When False artists will be visible outside of the axes which
+        When False artists will be visible outside of the Axes which
         can lead to unexpected results.
 
         Parameters
@@ -1012,7 +1021,7 @@ class Artist:
 
         If True, the artist is excluded from regular drawing of the figure.
         You have to call `.Figure.draw_artist` / `.Axes.draw_artist`
-        explicitly on the artist. This appoach is used to speed up animations
+        explicitly on the artist. This approach is used to speed up animations
         using blitting.
 
         See also `matplotlib.animation` and
@@ -1038,32 +1047,6 @@ class Artist:
         in_layout : bool
         """
         self._in_layout = in_layout
-
-    def update(self, props):
-        """
-        Update this artist's properties from the dict *props*.
-
-        Parameters
-        ----------
-        props : dict
-        """
-        ret = []
-        with cbook._setattr_cm(self, eventson=False):
-            for k, v in props.items():
-                # Allow attributes we want to be able to update through
-                # art.update, art.set, setp.
-                if k == "axes":
-                    ret.append(setattr(self, k, v))
-                else:
-                    func = getattr(self, f"set_{k}", None)
-                    if not callable(func):
-                        raise AttributeError(f"{type(self).__name__!r} object "
-                                             f"has no property {k!r}")
-                    ret.append(func(v))
-        if ret:
-            self.pchanged()
-            self.stale = True
-        return ret
 
     def get_label(self):
         """Return the label used for this artist in the legend."""
@@ -1115,6 +1098,11 @@ class Artist:
         where one usually expects no margin on the bottom edge (0) of the
         histogram.
 
+        Moreover, margin expansion "bumps" against sticky edges and cannot
+        cross them.  For example, if the upper data limit is 1.0, the upper
+        view limit computed by simple margin application is 1.2, but there is a
+        sticky edge at 1.1, then the actual upper view limit will be 1.1.
+
         This attribute cannot be assigned to; however, the ``x`` and ``y``
         lists can be modified in place as needed.
 
@@ -1147,12 +1135,58 @@ class Artist:
         """Return a dictionary of all the properties of the artist."""
         return ArtistInspector(self).properties()
 
+    def _update_props(self, props, errfmt):
+        """
+        Helper for `.Artist.set` and `.Artist.update`.
+
+        *errfmt* is used to generate error messages for invalid property
+        names; it get formatted with ``type(self)`` and the property name.
+        """
+        ret = []
+        with cbook._setattr_cm(self, eventson=False):
+            for k, v in props.items():
+                # Allow attributes we want to be able to update through
+                # art.update, art.set, setp.
+                if k == "axes":
+                    ret.append(setattr(self, k, v))
+                else:
+                    func = getattr(self, f"set_{k}", None)
+                    if not callable(func):
+                        raise AttributeError(
+                            errfmt.format(cls=type(self), prop_name=k))
+                    ret.append(func(v))
+        if ret:
+            self.pchanged()
+            self.stale = True
+        return ret
+
+    def update(self, props):
+        """
+        Update this artist's properties from the dict *props*.
+
+        Parameters
+        ----------
+        props : dict
+        """
+        return self._update_props(
+            props, "{cls.__name__!r} object has no property {prop_name!r}")
+
+    def _internal_update(self, kwargs):
+        """
+        Update artist properties without prenormalizing them, but generating
+        errors as if calling `set`.
+
+        The lack of prenormalization is to maintain backcompatibility.
+        """
+        return self._update_props(
+            kwargs, "{cls.__name__}.set() got an unexpected keyword argument "
+            "{prop_name!r}")
+
     def set(self, **kwargs):
         # docstring and signature are auto-generated via
         # Artist._update_set_signature_and_docstring() at the end of the
         # module.
-        kwargs = cbook.normalize_kwargs(kwargs, self)
-        return self.update(kwargs)
+        return self._internal_update(cbook.normalize_kwargs(kwargs, self))
 
     @contextlib.contextmanager
     def _cm_set(self, **kwargs):
@@ -1258,17 +1292,25 @@ class Artist:
         --------
         get_cursor_data
         """
-        if np.ndim(data) == 0 and getattr(self, "colorbar", None):
+        if np.ndim(data) == 0 and isinstance(self, ScalarMappable):
             # This block logically belongs to ScalarMappable, but can't be
             # implemented in it because most ScalarMappable subclasses inherit
             # from Artist first and from ScalarMappable second, so
             # Artist.format_cursor_data would always have precedence over
             # ScalarMappable.format_cursor_data.
-            return (
-                "["
-                + cbook.strip_math(
-                    self.colorbar.formatter.format_data_short(data)).strip()
-                + "]")
+            n = self.cmap.N
+            if np.ma.getmask(data):
+                return "[]"
+            normed = self.norm(data)
+            if np.isfinite(normed):
+                # Midpoints of neighboring color intervals.
+                neighbors = self.norm.inverse(
+                    (int(self.norm(data) * n) + np.array([0, 1])) / n)
+                delta = abs(neighbors - data).max()
+                g_sig_digits = cbook._g_sig_digits(data, delta)
+            else:
+                g_sig_digits = 3  # Consistent with default below.
+            return "[{:-#.{}g}]".format(data, g_sig_digits)
         else:
             try:
                 data[0]
@@ -1278,27 +1320,49 @@ class Artist:
                                  if isinstance(item, Number))
             return "[" + data_str + "]"
 
-    @property
-    def mouseover(self):
+    def get_mouseover(self):
         """
-        If this property is set to *True*, the artist will be queried for
-        custom context information when the mouse cursor moves over it.
-
-        See also :meth:`get_cursor_data`, :class:`.ToolCursorPosition` and
-        :class:`.NavigationToolbar2`.
+        Return whether this artist is queried for custom context information
+        when the mouse cursor moves over it.
         """
         return self._mouseover
 
-    @mouseover.setter
-    def mouseover(self, val):
-        val = bool(val)
-        self._mouseover = val
+    def set_mouseover(self, mouseover):
+        """
+        Set whether this artist is queried for custom context information when
+        the mouse cursor moves over it.
+
+        Parameters
+        ----------
+        mouseover : bool
+
+        See Also
+        --------
+        get_cursor_data
+        .ToolCursorPosition
+        .NavigationToolbar2
+        """
+        self._mouseover = bool(mouseover)
         ax = self.axes
         if ax:
-            if val:
+            if self._mouseover:
                 ax._mouseover_set.add(self)
             else:
                 ax._mouseover_set.discard(self)
+
+    mouseover = property(get_mouseover, set_mouseover)  # backcompat.
+
+
+def _get_tightbbox_for_layout_only(obj, *args, **kwargs):
+    """
+    Matplotlib's `.Axes.get_tightbbox` and `.Axis.get_tightbbox` support a
+    *for_layout_only* kwarg; this helper tries to uses the kwarg but skips it
+    when encountering third-party subclasses that do not support it.
+    """
+    try:
+        return obj.get_tightbbox(*args, **{**kwargs, "for_layout_only": True})
+    except TypeError:
+        return obj.get_tightbbox(*args, **kwargs)
 
 
 class ArtistInspector:
@@ -1450,6 +1514,7 @@ class ArtistInspector:
         'matplotlib.image._ImageBase.set_filternorm',
         'matplotlib.image._ImageBase.set_filterrad',
         'matplotlib.image._ImageBase.set_interpolation',
+        'matplotlib.image._ImageBase.set_interpolation_stage',
         'matplotlib.image._ImageBase.set_resample',
         'matplotlib.text._AnnotationBase.set_annotation_clip',
     }

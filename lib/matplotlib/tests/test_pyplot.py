@@ -1,4 +1,5 @@
 import difflib
+import numpy as np
 import subprocess
 import sys
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 
 import matplotlib as mpl
 from matplotlib import pyplot as plt
-from matplotlib.cbook import MatplotlibDeprecationWarning
+from matplotlib._api import MatplotlibDeprecationWarning
 
 
 def test_pyplot_up_to_date(tmpdir):
@@ -205,8 +206,8 @@ def test_subplot_replace_projection():
     ax = plt.subplot(1, 2, 1)
     ax1 = plt.subplot(1, 2, 1)
     ax2 = plt.subplot(1, 2, 2)
-    # This will delete ax / ax1 as they fully overlap
-    ax3 = plt.subplot(1, 2, 1, projection='polar')
+    with pytest.warns(MatplotlibDeprecationWarning):
+        ax3 = plt.subplot(1, 2, 1, projection='polar')
     ax4 = plt.subplot(1, 2, 1, projection='polar')
     assert ax is not None
     assert ax1 is ax
@@ -227,6 +228,7 @@ def test_subplot_kwarg_collision():
     ax1 = plt.subplot(projection='polar', theta_offset=0)
     ax2 = plt.subplot(projection='polar', theta_offset=0)
     assert ax1 is ax2
+    ax1.remove()
     ax3 = plt.subplot(projection='polar', theta_offset=1)
     assert ax1 is not ax3
     assert ax1 not in plt.gcf().axes
@@ -253,7 +255,7 @@ def test_gca_kwargs():
     assert ax1.name == 'polar'
     plt.close()
 
-    # plt.gca() ignores keyword arguments if an axes already exists.
+    # plt.gca() ignores keyword arguments if an Axes already exists.
     plt.figure()
     ax = plt.gca()
     with pytest.warns(
@@ -267,12 +269,14 @@ def test_gca_kwargs():
 
 
 def test_subplot_projection_reuse():
-    # create an axes
+    # create an Axes
     ax1 = plt.subplot(111)
     # check that it is current
     assert ax1 is plt.gca()
     # make sure we get it back if we ask again
     assert ax1 is plt.subplot(111)
+    # remove it
+    ax1.remove()
     # create a polar plot
     ax2 = plt.subplot(111, projection='polar')
     assert ax2 is plt.gca()
@@ -280,6 +284,7 @@ def test_subplot_projection_reuse():
     assert ax1 not in plt.gcf().axes
     # assert we get it back if no extra parameters passed
     assert ax2 is plt.subplot(111)
+    ax2.remove()
     # now check explicitly setting the projection to rectilinear
     # makes a new axes
     ax3 = plt.subplot(111, projection='rectilinear')
@@ -301,12 +306,40 @@ def test_subplot_polar_normalization():
 
 
 def test_subplot_change_projection():
+    created_axes = set()
     ax = plt.subplot()
+    created_axes.add(ax)
     projections = ('aitoff', 'hammer', 'lambert', 'mollweide',
                    'polar', 'rectilinear', '3d')
     for proj in projections:
-        ax_next = plt.subplot(projection=proj)
-        assert ax_next is plt.subplot()
-        assert ax_next.name == proj
-        assert ax is not ax_next
-        ax = ax_next
+        ax.remove()
+        ax = plt.subplot(projection=proj)
+        assert ax is plt.subplot()
+        assert ax.name == proj
+        created_axes.add(ax)
+    # Check that each call created a new Axes.
+    assert len(created_axes) == 1 + len(projections)
+
+
+def test_polar_second_call():
+    # the first call creates the axes with polar projection
+    ln1, = plt.polar(0., 1., 'ro')
+    assert isinstance(ln1, mpl.lines.Line2D)
+    # the second call should reuse the existing axes
+    ln2, = plt.polar(1.57, .5, 'bo')
+    assert isinstance(ln2, mpl.lines.Line2D)
+    assert ln1.axes is ln2.axes
+
+
+def test_fallback_position():
+    # check that position kwarg works if rect not supplied
+    axref = plt.axes([0.2, 0.2, 0.5, 0.5])
+    axtest = plt.axes(position=[0.2, 0.2, 0.5, 0.5])
+    np.testing.assert_allclose(axtest.bbox.get_points(),
+                               axref.bbox.get_points())
+
+    # check that position kwarg ignored if rect is supplied
+    axref = plt.axes([0.2, 0.2, 0.5, 0.5])
+    axtest = plt.axes([0.2, 0.2, 0.5, 0.5], position=[0.1, 0.1, 0.8, 0.8])
+    np.testing.assert_allclose(axtest.bbox.get_points(),
+                               axref.bbox.get_points())

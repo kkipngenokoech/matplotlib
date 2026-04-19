@@ -10,7 +10,8 @@ import sys
 import pytest
 
 
-pytest.importorskip('sphinx')
+pytest.importorskip('sphinx',
+                    minversion=None if sys.version_info < (3, 10) else '4.1.3')
 
 
 def test_tinypages(tmpdir):
@@ -18,6 +19,17 @@ def test_tinypages(tmpdir):
     shutil.copytree(Path(__file__).parent / 'tinypages', source_dir)
     html_dir = source_dir / '_build' / 'html'
     doctree_dir = source_dir / 'doctrees'
+    # Build the pages with warnings turned into errors
+    cmd = [sys.executable, '-msphinx', '-W', '-b', 'html',
+           '-d', str(doctree_dir),
+           str(Path(__file__).parent / 'tinypages'), str(html_dir)]
+    # On CI, gcov emits warnings (due to agg headers being included with the
+    # same name in multiple extension modules -- but we don't care about their
+    # coverage anyways); hide them using GCOV_ERROR_FILE.
+    proc = Popen(
+        cmd, stdout=PIPE, stderr=PIPE, universal_newlines=True,
+        env={**os.environ, "MPLBACKEND": "", "GCOV_ERROR_FILE": os.devnull})
+    out, err = proc.communicate()
 
     # Build the pages with warnings turned into errors
     build_sphinx_html(source_dir, doctree_dir, html_dir)
@@ -86,10 +98,35 @@ def test_tinypages(tmpdir):
     assert filecmp.cmp(range_6, plot_file(5))
 
 
-def build_sphinx_html(source_dir, doctree_dir, html_dir):
+def test_plot_html_show_source_link(tmpdir):
+    source_dir = Path(tmpdir) / 'src'
+    source_dir.mkdir()
+    parent = Path(__file__).parent
+    shutil.copyfile(parent / 'tinypages/conf.py', source_dir / 'conf.py')
+    shutil.copytree(parent / 'tinypages/_static', source_dir / '_static')
+    doctree_dir = source_dir / 'doctrees'
+    (source_dir / 'index.rst').write_text("""
+.. plot::
+
+    plt.plot(range(2))
+""")
+    # Make sure source scripts are created by default
+    html_dir1 = source_dir / '_build' / 'html1'
+    build_sphinx_html(source_dir, doctree_dir, html_dir1)
+    assert "index-1.py" in [p.name for p in html_dir1.iterdir()]
+    # Make sure source scripts are NOT created when
+    # plot_html_show_source_link` is False
+    html_dir2 = source_dir / '_build' / 'html2'
+    build_sphinx_html(source_dir, doctree_dir, html_dir2,
+                      extra_args=['-D', 'plot_html_show_source_link=0'])
+    assert "index-1.py" not in [p.name for p in html_dir2.iterdir()]
+
+
+def build_sphinx_html(source_dir, doctree_dir, html_dir, extra_args=None):
     # Build the pages with warnings turned into errors
+    extra_args = [] if extra_args is None else extra_args
     cmd = [sys.executable, '-msphinx', '-W', '-b', 'html',
-           '-d', str(doctree_dir), str(source_dir), str(html_dir)]
+           '-d', str(doctree_dir), str(source_dir), str(html_dir), *extra_args]
     proc = Popen(cmd, stdout=PIPE, stderr=PIPE, universal_newlines=True,
                  env={**os.environ, "MPLBACKEND": ""})
     out, err = proc.communicate()
