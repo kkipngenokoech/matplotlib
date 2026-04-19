@@ -341,6 +341,7 @@ class Legend(Artist):
         handler_map=None,
         title_fontproperties=None,  # properties for the legend title
         alignment="center",       # control the alignment within the legend box
+        draggable=False,      # whether the legend can be dragged with the mouse
         *,
         ncol=1  # synonym for ncols (backward compatibility)
     ):
@@ -357,6 +358,9 @@ class Legend(Artist):
             A list of labels to show next to the artists. The length of handles
             and labels should be the same. If they are not, they are truncated
             to the smaller of both lengths.
+
+        draggable : bool, default: False
+            Whether the legend can be dragged with the mouse.
 
         Other Parameters
         ----------------
