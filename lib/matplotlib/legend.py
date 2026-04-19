@@ -73,6 +73,22 @@ class DraggableLegend(DraggableOffsetBox):
 
         super().__init__(legend, legend._legend_box, use_blit=use_blit)
 
+    def __getstate__(self):
+        # Remove unpickleable canvas references for serialization
+        state = self.__dict__.copy()
+        # Remove canvas-related attributes that can't be pickled
+        state.pop('canvas', None)
+        if hasattr(self, '_c1'):
+            state.pop('_c1', None)
+        if hasattr(self, '_c2'):
+            state.pop('_c2', None)
+        return state
+
+    def __setstate__(self, state):
+        # Restore state and reinitialize canvas connections if needed
+        self.__dict__.update(state)
+        # Canvas connections will be restored when the legend is added back to a figure
+
     def finalize_offset(self):
         if self._update == "loc":
             self._update_loc(self.get_loc_in_canvas())
