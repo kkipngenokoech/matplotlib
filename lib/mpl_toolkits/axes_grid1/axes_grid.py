@@ -13,8 +13,10 @@ from .mpl_axes import Axes
 def _tick_only(ax, bottom_on, left_on):
     bottom_off = not bottom_on
     left_off = not left_on
-    ax.axis["bottom"].toggle(ticklabels=bottom_off, label=bottom_off)
-    ax.axis["left"].toggle(ticklabels=left_off, label=left_off)
+    # Handle both callable axis (like cartopy GeoAxes) and dict-like axis
+    axis = ax.axis() if callable(ax.axis) else ax.axis
+    axis["bottom"].toggle(ticklabels=bottom_off, label=bottom_off)
+    axis["left"].toggle(ticklabels=left_off, label=left_off)
 
 
 class CbarAxesBase:
@@ -28,7 +30,9 @@ class CbarAxesBase:
 
     @_api.deprecated("3.8", alternative="ax.tick_params and colorbar.set_label")
     def toggle_label(self, b):
-        axis = self.axis[self.orientation]
+        # Handle both callable axis (like cartopy GeoAxes) and dict-like axis
+        axis_dict = self.axis() if callable(self.axis) else self.axis
+        axis = axis_dict[self.orientation]
         axis.toggle(ticklabels=b, label=b)
 
 
