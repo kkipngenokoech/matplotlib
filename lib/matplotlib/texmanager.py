@@ -29,12 +29,28 @@ import subprocess
 from tempfile import TemporaryDirectory
 
 import numpy as np
-from packaging.version import parse as parse_version
 
 import matplotlib as mpl
 from matplotlib import _api, cbook, dviread, rcParams
 
 _log = logging.getLogger(__name__)
+
+
+def _usepackage_if_not_loaded(package, *, option=None):
+    """
+    Output LaTeX code that loads a package (possibly with an option) if it
+    hasn't been loaded yet.
+
+    LaTeX cannot load twice a package with different options, so this helper
+    can be used to protect against users loading arbitrary packages/options in
+    their custom preamble.
+    """
+    option = f"[{option}]" if option is not None else ""
+    return (
+        r"\makeatletter"
+        r"\@ifpackageloaded{%(package)s}{}{\usepackage%(option)s{%(package)s}}"
+        r"\makeatother"
+    ) % {"package": package, "option": option}
 
 
 class TexManager:
@@ -63,7 +79,7 @@ class TexManager:
         'avant garde': ('pag', r'\usepackage{avant}'),
         'courier': ('pcr', r'\usepackage{courier}'),
         # Loading the type1ec package ensures that cm-super is installed, which
-        # is necessary for unicode computer modern.  (It also allows the use of
+        # is necessary for Unicode computer modern.  (It also allows the use of
         # computer modern at arbitrary sizes, but that's just a side effect.)
         'monospace': ('cmtt', r'\usepackage{type1ec}'),
         'computer modern roman': ('cmr', r'\usepackage{type1ec}'),
@@ -145,10 +161,9 @@ class TexManager:
         """
         Return a filename based on a hash of the string, fontsize, and dpi.
         """
-        s = ''.join([tex, self.get_font_config(), '%f' % fontsize,
-                     self.get_custom_preamble(), str(dpi or '')])
+        src = self._get_tex_source(tex, fontsize) + str(dpi)
         return os.path.join(
-            self.texcache, hashlib.md5(s.encode('utf-8')).hexdigest())
+            self.texcache, hashlib.md5(src.encode('utf-8')).hexdigest())
 
     def get_font_preamble(self):
         """
@@ -160,26 +175,44 @@ class TexManager:
         """Return a string containing user additions to the tex preamble."""
         return rcParams['text.latex.preamble']
 
-    def _get_preamble(self):
+    def _get_tex_source(self, tex, fontsize):
+        """Return the complete TeX source for processing a TeX string."""
+        self.get_font_config()  # Updates self._font_preamble.
+        baselineskip = 1.25 * fontsize
+        fontcmd = (r'\sffamily' if self._font_family == 'sans-serif' else
+                   r'\ttfamily' if self._font_family == 'monospace' else
+                   r'\rmfamily')
         return "\n".join([
             r"\documentclass{article}",
-            # Pass-through \mathdefault, which is used in non-usetex mode to
-            # use the default text font but was historically suppressed in
-            # usetex mode.
+            r"% Pass-through \mathdefault, which is used in non-usetex mode",
+            r"% to use the default text font but was historically suppressed",
+            r"% in usetex mode.",
             r"\newcommand{\mathdefault}[1]{#1}",
             self._font_preamble,
             r"\usepackage[utf8]{inputenc}",
             r"\DeclareUnicodeCharacter{2212}{\ensuremath{-}}",
-            # geometry is loaded before the custom preamble as convert_psfrags
-            # relies on a custom preamble to change the geometry.
+            r"% geometry is loaded before the custom preamble as ",
+            r"% convert_psfrags relies on a custom preamble to change the ",
+            r"% geometry.",
             r"\usepackage[papersize=72in, margin=1in]{geometry}",
             self.get_custom_preamble(),
-            # textcomp is loaded last (if not already loaded by the custom
-            # preamble) in order not to clash with custom packages (e.g.
-            # newtxtext) which load it with different options.
-            r"\makeatletter"
-            r"\@ifpackageloaded{textcomp}{}{\usepackage{textcomp}}"
-            r"\makeatother",
+            r"% Use `underscore` package to take care of underscores in text.",
+            r"% The [strings] option allows to use underscores in file names.",
+            _usepackage_if_not_loaded("underscore", option="strings"),
+            r"% Custom packages (e.g. newtxtext) may already have loaded ",
+            r"% textcomp with different options.",
+            _usepackage_if_not_loaded("textcomp"),
+            r"\pagestyle{empty}",
+            r"\begin{document}",
+            r"% The empty hbox ensures that a page is printed even for empty",
+            r"% inputs, except when using psfrag which gets confused by it.",
+            r"% matplotlibbaselinemarker is used by dviread to detect the",
+            r"% last line's baseline.",
+            rf"\fontsize{{{fontsize}}}{{{baselineskip}}}%",
+            r"\ifdefined\psfrag\else\hbox{}\fi%",
+            rf"{{\obeylines{fontcmd} {tex}}}%",
+            r"\special{matplotlibbaselinemarker}%",
+            r"\end{document}",
         ])
 
     def make_tex(self, tex, fontsize):
@@ -188,26 +221,8 @@ class TexManager:
 
         Return the file name.
         """
-        basefile = self.get_basefile(tex, fontsize)
-        texfile = '%s.tex' % basefile
-        fontcmd = {'sans-serif': r'{\sffamily %s}',
-                   'monospace': r'{\ttfamily %s}'}.get(self._font_family,
-                                                       r'{\rmfamily %s}')
-
-        Path(texfile).write_text(
-            r"""
-%s
-\pagestyle{empty}
-\begin{document}
-%% The empty hbox ensures that a page is printed even for empty inputs, except
-%% when using psfrag which gets confused by it.
-\fontsize{%f}{%f}%%
-\ifdefined\psfrag\else\hbox{}\fi%%
-%s
-\end{document}
-""" % (self._get_preamble(), fontsize, fontsize * 1.25, fontcmd % tex),
-            encoding='utf-8')
-
+        texfile = self.get_basefile(tex, fontsize) + ".tex"
+        Path(texfile).write_text(self._get_tex_source(tex, fontsize))
         return texfile
 
     def _run_checked_subprocess(self, command, tex, *, cwd=None):
@@ -241,16 +256,19 @@ class TexManager:
         basefile = self.get_basefile(tex, fontsize)
         dvifile = '%s.dvi' % basefile
         if not os.path.exists(dvifile):
-            texfile = self.make_tex(tex, fontsize)
+            texfile = Path(self.make_tex(tex, fontsize))
             # Generate the dvi in a temporary directory to avoid race
             # conditions e.g. if multiple processes try to process the same tex
             # string at the same time.  Having tmpdir be a subdirectory of the
             # final output dir ensures that they are on the same filesystem,
-            # and thus replace() works atomically.
+            # and thus replace() works atomically.  It also allows referring to
+            # the texfile with a relative path (for pathological MPLCONFIGDIRs,
+            # the absolute path may contain characters (e.g. ~) that TeX does
+            # not support.)
             with TemporaryDirectory(dir=Path(dvifile).parent) as tmpdir:
                 self._run_checked_subprocess(
                     ["latex", "-interaction=nonstopmode", "--halt-on-error",
-                     texfile], tex, cwd=tmpdir)
+                     f"../{texfile.name}"], tex, cwd=tmpdir)
                 (Path(tmpdir) / Path(dvifile).name).replace(dvifile)
         return dvifile
 
@@ -271,9 +289,8 @@ class TexManager:
             # dvipng 1.16 has a bug (fixed in f3ff241) that breaks --freetype0
             # mode, so for it we keep FreeType enabled; the image will be
             # slightly off.
-            bad_ver = parse_version("1.16")
-            if (getattr(mpl, "_called_from_pytest", False)
-                    and mpl._get_executable_info("dvipng").version != bad_ver):
+            if (getattr(mpl, "_called_from_pytest", False) and
+                    mpl._get_executable_info("dvipng").raw_version != "1.16"):
                 cmd.insert(1, "--freetype0")
             self._run_checked_subprocess(cmd, tex)
         return pngfile

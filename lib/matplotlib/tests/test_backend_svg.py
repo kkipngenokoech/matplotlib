@@ -1,6 +1,5 @@
 import datetime
 from io import BytesIO
-import tempfile
 import xml.etree.ElementTree
 import xml.parsers.expat
 
@@ -8,8 +7,8 @@ import numpy as np
 import pytest
 
 import matplotlib as mpl
-from matplotlib import dviread
 from matplotlib.figure import Figure
+from matplotlib.text import Text
 import matplotlib.pyplot as plt
 from matplotlib.testing.decorators import image_comparison, check_figures_equal
 
@@ -181,22 +180,6 @@ def test_count_bitmaps():
     assert count_tag(fig5, "path") == 1  # axis patch
 
 
-@needs_usetex
-def test_missing_psfont(monkeypatch):
-    """An error is raised if a TeX font lacks a Type-1 equivalent"""
-
-    def psfont(*args, **kwargs):
-        return dviread.PsFont(texname='texfont', psname='Some Font',
-                              effects=None, encoding=None, filename=None)
-
-    monkeypatch.setattr(dviread.PsfontsMap, '__getitem__', psfont)
-    mpl.rc('text', usetex=True)
-    fig, ax = plt.subplots()
-    ax.text(0.5, 0.5, 'hello')
-    with tempfile.TemporaryFile() as tmpfile, pytest.raises(ValueError):
-        fig.savefig(tmpfile, format='svg')
-
-
 # Use Computer Modern Sans Serif, not Helvetica (which has no \textwon).
 @mpl.style.context('default')
 @needs_usetex
@@ -270,7 +253,7 @@ def test_gid():
         # we need to exclude certain objects which will not appear in the svg
         if isinstance(obj, OffsetBox):
             return False
-        if isinstance(obj, plt.Text):
+        if isinstance(obj, Text):
             if obj.get_text() == "":
                 return False
             elif obj.axes is None:

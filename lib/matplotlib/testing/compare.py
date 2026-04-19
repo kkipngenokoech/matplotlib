@@ -8,7 +8,6 @@ import hashlib
 import logging
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -62,15 +61,6 @@ def get_file_hash(path, block_size=2 ** 20):
                    .encode('utf-8'))
 
     return md5.hexdigest()
-
-
-# Modified from https://bugs.python.org/issue25567.
-_find_unsafe_bytes = re.compile(br'[^a-zA-Z0-9_@%+=:,./-]').search
-
-
-def _shlex_quote_bytes(b):
-    return (b if _find_unsafe_bytes(b) is None
-            else b"'" + b.replace(b"'", b"'\"'\"'") + b"'")
 
 
 class _ConverterError(Exception):
@@ -136,9 +126,7 @@ class _GSConverter(_Converter):
         self._proc.stdin.flush()
         # GS> if nothing left on the stack; GS<n> if n items left on the stack.
         err = self._read_until((b"GS<", b"GS>"))
-        stack = ""
-        if err.endswith(b"GS<"):
-            stack = self._read_until(b">")
+        stack = self._read_until(b">") if err.endswith(b"GS<") else b""
         if stack or not os.path.exists(dest):
             stack_size = int(stack[:-1]) if stack else 0
             self._proc.stdin.write(b"pop\n" * stack_size)

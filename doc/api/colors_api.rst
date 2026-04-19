@@ -21,6 +21,7 @@ Classes
    :toctree: _as_gen/
    :template: autosummary.rst
 
+   AsinhNorm
    BoundaryNorm
    Colormap
    CenteredNorm
@@ -52,3 +53,4 @@ Functions
    is_color_like
    same_color
    get_named_colors_mapping
+   make_norm_from_scale

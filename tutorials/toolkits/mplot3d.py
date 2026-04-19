@@ -5,7 +5,8 @@ The mplot3d Toolkit
 
 Generating 3D plots using the mplot3d toolkit.
 
-.. currentmodule:: mpl_toolkits.mplot3d
+This tutorial showcases various 3D plots. Click on the figures to see each full
+gallery example with the code that generates the figures.
 
 .. contents::
    :backlinks: none
@@ -22,7 +23,6 @@ Multiple 3D subplots can be added on the same figure, as for 2D subplots.
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_subplot3d_001.png
    :target: ../../gallery/mplot3d/subplot3d.html
    :align: center
-   :scale: 50
 
 .. versionchanged:: 1.0.0
    Prior to Matplotlib 1.0.0, only a single `.Axes3D` could be created per
@@ -39,79 +39,72 @@ toolkit.
 .. _plot3d:
 
 Line plots
-====================
-.. automethod:: Axes3D.plot
+==========
+See `.Axes3D.plot` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_lines3d_001.png
    :target: ../../gallery/mplot3d/lines3d.html
    :align: center
-   :scale: 50
 
 .. _scatter3d:
 
 Scatter plots
 =============
-.. automethod:: Axes3D.scatter
+See `.Axes3D.scatter` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_scatter3d_001.png
    :target: ../../gallery/mplot3d/scatter3d.html
    :align: center
-   :scale: 50
 
 .. _wireframe:
 
 Wireframe plots
 ===============
-.. automethod:: Axes3D.plot_wireframe
+See `.Axes3D.plot_wireframe` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_wire3d_001.png
    :target: ../../gallery/mplot3d/wire3d.html
    :align: center
-   :scale: 50
 
 .. _surface:
 
 Surface plots
 =============
-.. automethod:: Axes3D.plot_surface
+See `.Axes3D.plot_surface` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_surface3d_001.png
    :target: ../../gallery/mplot3d/surface3d.html
    :align: center
-   :scale: 50
 
 .. _trisurface:
 
 Tri-Surface plots
 =================
-.. automethod:: Axes3D.plot_trisurf
+See `.Axes3D.plot_trisurf` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_trisurf3d_001.png
    :target: ../../gallery/mplot3d/trisurf3d.html
    :align: center
-   :scale: 50
 
 .. _contour3d:
 
 Contour plots
 =============
-.. automethod:: Axes3D.contour
+See `.Axes3D.contour` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_contour3d_001.png
    :target: ../../gallery/mplot3d/contour3d.html
    :align: center
-   :scale: 50
 
 .. _contourf3d:
 
 Filled contour plots
 ====================
-.. automethod:: Axes3D.contourf
+See `.Axes3D.contourf` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_contourf3d_001.png
    :target: ../../gallery/mplot3d/contourf3d.html
    :align: center
-   :scale: 50
 
 .. versionadded:: 1.1.0
    The feature demoed in the second contourf3d example was enabled as a
@@ -120,53 +113,48 @@ Filled contour plots
 .. _polygon3d:
 
 Polygon plots
-====================
-.. automethod:: Axes3D.add_collection3d
+=============
+See `.Axes3D.add_collection3d` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_polys3d_001.png
    :target: ../../gallery/mplot3d/polys3d.html
    :align: center
-   :scale: 50
 
 .. _bar3d:
 
 Bar plots
-====================
-.. automethod:: Axes3D.bar
+=========
+See `.Axes3D.bar` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_bars3d_001.png
    :target: ../../gallery/mplot3d/bars3d.html
    :align: center
-   :scale: 50
 
 .. _quiver3d:
 
 Quiver
-====================
-.. automethod:: Axes3D.quiver
+======
+See `.Axes3D.quiver` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_quiver3d_001.png
    :target: ../../gallery/mplot3d/quiver3d.html
    :align: center
-   :scale: 50
 
 .. _2dcollections3d:
 
 2D plots in 3D
-====================
+==============
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_2dcollections3d_001.png
    :target: ../../gallery/mplot3d/2dcollections3d.html
    :align: center
-   :scale: 50
 
 .. _text3d:
 
 Text
-====================
-.. automethod:: Axes3D.text
+====
+See `.Axes3D.text` for API documentation.
 
 .. figure:: ../../gallery/mplot3d/images/sphx_glr_text3d_001.png
    :target: ../../gallery/mplot3d/text3d.html
    :align: center
-   :scale: 50
 """

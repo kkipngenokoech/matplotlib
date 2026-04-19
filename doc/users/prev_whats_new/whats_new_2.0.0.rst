@@ -1,11 +1,11 @@
 .. _whats-new-2-0-0:
 
-New in matplotlib 2.0
-=====================
+What's new in Matplotlib 2.0 (Jan 17, 2017)
+===========================================
 
 .. note::
 
-   matplotlib 2.0 supports Python 2.7, and 3.4+
+   Matplotlib 2.0 supports Python 2.7, and 3.4+
 
 
 
@@ -17,7 +17,7 @@ The major changes in v2.0 are related to overhauling the default styles.
 .. toctree::
    :maxdepth: 2
 
-   ../dflt_style_changes
+   dflt_style_changes
 
 
 Improved color conversion API and RGBA support

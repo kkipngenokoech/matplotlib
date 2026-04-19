@@ -77,11 +77,11 @@ static void PyQuadContourGenerator_dealloc(PyQuadContourGenerator* self)
 }
 
 const char* PyQuadContourGenerator_create_contour__doc__ =
-    "create_contour(level)\n"
+    "create_contour(self, level)\n"
     "--\n\n"
     "Create and return a non-filled contour.";
 
-static PyObject* PyQuadContourGenerator_create_contour(PyQuadContourGenerator* self, PyObject* args, PyObject* kwds)
+static PyObject* PyQuadContourGenerator_create_contour(PyQuadContourGenerator* self, PyObject* args)
 {
     double level;
     if (!PyArg_ParseTuple(args, "d:create_contour", &level)) {
@@ -94,11 +94,11 @@ static PyObject* PyQuadContourGenerator_create_contour(PyQuadContourGenerator* s
 }
 
 const char* PyQuadContourGenerator_create_filled_contour__doc__ =
-    "create_filled_contour(lower_level, upper_level)\n"
+    "create_filled_contour(self, lower_level, upper_level)\n"
     "--\n\n"
     "Create and return a filled contour";
 
-static PyObject* PyQuadContourGenerator_create_filled_contour(PyQuadContourGenerator* self, PyObject* args, PyObject* kwds)
+static PyObject* PyQuadContourGenerator_create_filled_contour(PyQuadContourGenerator* self, PyObject* args)
 {
     double lower_level, upper_level;
     if (!PyArg_ParseTuple(args, "dd:create_filled_contour",
@@ -123,13 +123,19 @@ static PyObject* PyQuadContourGenerator_create_filled_contour(PyQuadContourGener
 static PyTypeObject* PyQuadContourGenerator_init_type(PyObject* m, PyTypeObject* type)
 {
     static PyMethodDef methods[] = {
-        {"create_contour", (PyCFunction)PyQuadContourGenerator_create_contour, METH_VARARGS, PyQuadContourGenerator_create_contour__doc__},
-        {"create_filled_contour", (PyCFunction)PyQuadContourGenerator_create_filled_contour, METH_VARARGS, PyQuadContourGenerator_create_filled_contour__doc__},
+        {"create_contour",
+         (PyCFunction)PyQuadContourGenerator_create_contour,
+         METH_VARARGS,
+         PyQuadContourGenerator_create_contour__doc__},
+        {"create_filled_contour",
+         (PyCFunction)PyQuadContourGenerator_create_filled_contour,
+         METH_VARARGS,
+         PyQuadContourGenerator_create_filled_contour__doc__},
         {NULL}
     };
 
     memset(type, 0, sizeof(PyTypeObject));
-    type->tp_name = "matplotlib.QuadContourGenerator";
+    type->tp_name = "matplotlib._contour.QuadContourGenerator";
     type->tp_doc = PyQuadContourGenerator_init__doc__;
     type->tp_basicsize = sizeof(PyQuadContourGenerator);
     type->tp_dealloc = (destructor)PyQuadContourGenerator_dealloc;
@@ -152,23 +158,15 @@ static PyTypeObject* PyQuadContourGenerator_init_type(PyObject* m, PyTypeObject*
 
 /* Module */
 
-static struct PyModuleDef moduledef = {
-    PyModuleDef_HEAD_INIT,
-    "_contour",
-    NULL,
-    0,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL
-};
+static struct PyModuleDef moduledef = { PyModuleDef_HEAD_INIT, "_contour" };
 
 #pragma GCC visibility push(default)
 
 PyMODINIT_FUNC PyInit__contour(void)
 {
     PyObject *m;
+
+    import_array();
 
     m = PyModule_Create(&moduledef);
 
@@ -177,10 +175,9 @@ PyMODINIT_FUNC PyInit__contour(void)
     }
 
     if (!PyQuadContourGenerator_init_type(m, &PyQuadContourGeneratorType)) {
+        Py_DECREF(m);
         return NULL;
     }
-
-    import_array();
 
     return m;
 }

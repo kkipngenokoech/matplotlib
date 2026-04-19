@@ -12,6 +12,7 @@ These tools are used by `matplotlib.backend_managers.ToolManager`
 """
 
 import enum
+import functools
 import re
 import time
 from types import SimpleNamespace
@@ -22,7 +23,7 @@ import numpy as np
 
 import matplotlib as mpl
 from matplotlib._pylab_helpers import Gcf
-from matplotlib import cbook
+from matplotlib import _api, cbook
 
 
 class Cursors(enum.IntEnum):  # Must subclass int for the macOS backend.
@@ -35,6 +36,35 @@ class Cursors(enum.IntEnum):  # Must subclass int for the macOS backend.
     RESIZE_HORIZONTAL = enum.auto()
     RESIZE_VERTICAL = enum.auto()
 cursors = Cursors  # Backcompat.
+
+
+# _tool_registry, _register_tool_class, and _find_tool_class implement a
+# mechanism through which ToolManager.add_tool can determine whether a subclass
+# of the requested tool class has been registered (either for the current
+# canvas class or for a parent class), in which case that tool subclass will be
+# instantiated instead.  This is the mechanism used e.g. to allow different
+# GUI backends to implement different specializations for ConfigureSubplots.
+
+
+_tool_registry = set()
+
+
+def _register_tool_class(canvas_cls, tool_cls=None):
+    """Decorator registering *tool_cls* as a tool class for *canvas_cls*."""
+    if tool_cls is None:
+        return functools.partial(_register_tool_class, canvas_cls)
+    _tool_registry.add((canvas_cls, tool_cls))
+    return tool_cls
+
+
+def _find_tool_class(canvas_cls, tool_cls):
+    """Find a subclass of *tool_cls* registered for *canvas_cls*."""
+    for canvas_parent in canvas_cls.__mro__:
+        for tool_child in _api.recursive_subclasses(tool_cls):
+            if (canvas_parent, tool_child) in _tool_registry:
+                return tool_child
+    return tool_cls
+
 
 # Views positions tool
 _views_positions = 'viewpos'
@@ -53,7 +83,9 @@ class ToolBase:
     Keymap to associate with this tool.
 
     ``list[str]``: List of keys that will trigger this tool when a keypress
-    event is emitted on ``self.figure.canvas``.
+    event is emitted on ``self.figure.canvas``.  Note that this attribute is
+    looked up on the instance, and can therefore be a property (this is used
+    e.g. by the built-in tools to load the rcParams at instantiation time).
     """
 
     description = None
@@ -123,6 +155,7 @@ class ToolBase:
         """
         pass
 
+    @_api.deprecated("3.6", alternative="tool_removed_event")
     def destroy(self):
         """
         Destroy the tool.
@@ -266,24 +299,28 @@ class SetCursorBase(ToolBase):
         self._add_tool(event.tool)
 
     def _set_cursor_cbk(self, event):
-        if not event:
+        if not event or not self.canvas:
             return
         if (self._current_tool and getattr(event, "inaxes", None)
                 and event.inaxes.get_navigate()):
             if self._last_cursor != self._current_tool.cursor:
-                self.set_cursor(self._current_tool.cursor)
+                self.canvas.set_cursor(self._current_tool.cursor)
                 self._last_cursor = self._current_tool.cursor
         elif self._last_cursor != self._default_cursor:
-            self.set_cursor(self._default_cursor)
+            self.canvas.set_cursor(self._default_cursor)
             self._last_cursor = self._default_cursor
 
+    @_api.deprecated("3.5", alternative="`.FigureCanvasBase.set_cursor`")
     def set_cursor(self, cursor):
         """
         Set the cursor.
-
-        This method has to be implemented per backend.
         """
-        raise NotImplementedError
+        self.canvas.set_cursor(cursor)
+
+
+# This exists solely for deprecation warnings; remove with
+# SetCursorBase.set_cursor.
+ToolSetCursor = SetCursorBase
 
 
 class ToolCursorPosition(ToolBase):
@@ -348,7 +385,7 @@ class ToolQuit(ToolBase):
     """Tool to call the figure manager destroy method."""
 
     description = 'Quit the figure'
-    default_keymap = mpl.rcParams['keymap.quit']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.quit'])
 
     def trigger(self, sender, event, data=None):
         Gcf.destroy_fig(self.figure)
@@ -358,7 +395,7 @@ class ToolQuitAll(ToolBase):
     """Tool to call the figure manager destroy method."""
 
     description = 'Quit all figures'
-    default_keymap = mpl.rcParams['keymap.quit_all']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.quit_all'])
 
     def trigger(self, sender, event, data=None):
         Gcf.destroy_all()
@@ -368,7 +405,7 @@ class ToolGrid(ToolBase):
     """Tool to toggle the major grids of the figure."""
 
     description = 'Toggle major grids'
-    default_keymap = mpl.rcParams['keymap.grid']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.grid'])
 
     def trigger(self, sender, event, data=None):
         sentinel = str(uuid.uuid4())
@@ -383,7 +420,7 @@ class ToolMinorGrid(ToolBase):
     """Tool to toggle the major and minor grids of the figure."""
 
     description = 'Toggle major and minor grids'
-    default_keymap = mpl.rcParams['keymap.grid_minor']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.grid_minor'])
 
     def trigger(self, sender, event, data=None):
         sentinel = str(uuid.uuid4())
@@ -394,16 +431,13 @@ class ToolMinorGrid(ToolBase):
             mpl.backend_bases.key_press_handler(event, self.figure.canvas)
 
 
-class ToolFullScreen(ToolToggleBase):
+class ToolFullScreen(ToolBase):
     """Tool to toggle full screen."""
 
     description = 'Toggle fullscreen mode'
-    default_keymap = mpl.rcParams['keymap.fullscreen']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.fullscreen'])
 
-    def enable(self, event):
-        self.figure.canvas.manager.full_screen_toggle()
-
-    def disable(self, event):
+    def trigger(self, sender, event, data=None):
         self.figure.canvas.manager.full_screen_toggle()
 
 
@@ -428,7 +462,7 @@ class ToolYScale(AxisScaleBase):
     """Tool to toggle between linear and logarithmic scales on the Y axis."""
 
     description = 'Toggle scale Y axis'
-    default_keymap = mpl.rcParams['keymap.yscale']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.yscale'])
 
     def set_scale(self, ax, scale):
         ax.set_yscale(scale)
@@ -438,7 +472,7 @@ class ToolXScale(AxisScaleBase):
     """Tool to toggle between linear and logarithmic scales on the X axis."""
 
     description = 'Toggle scale X axis'
-    default_keymap = mpl.rcParams['keymap.xscale']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.xscale'])
 
     def set_scale(self, ax, scale):
         ax.set_xscale(scale)
@@ -592,7 +626,7 @@ class ToolHome(ViewsPositionsBase):
 
     description = 'Reset original view'
     image = 'home'
-    default_keymap = mpl.rcParams['keymap.home']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.home'])
     _on_trigger = 'home'
 
 
@@ -601,7 +635,7 @@ class ToolBack(ViewsPositionsBase):
 
     description = 'Back to previous view'
     image = 'back'
-    default_keymap = mpl.rcParams['keymap.back']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.back'])
     _on_trigger = 'back'
 
 
@@ -610,7 +644,7 @@ class ToolForward(ViewsPositionsBase):
 
     description = 'Forward to next view'
     image = 'forward'
-    default_keymap = mpl.rcParams['keymap.forward']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.forward'])
     _on_trigger = 'forward'
 
 
@@ -626,7 +660,7 @@ class SaveFigureBase(ToolBase):
 
     description = 'Save the figure'
     image = 'filesave'
-    default_keymap = mpl.rcParams['keymap.save']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.save'])
 
 
 class ZoomPanBase(ToolToggleBase):
@@ -701,7 +735,7 @@ class ToolZoom(ZoomPanBase):
 
     description = 'Zoom to rectangle'
     image = 'zoom_to_rect'
-    default_keymap = mpl.rcParams['keymap.zoom']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.zoom'])
     cursor = cursors.SELECT_REGION
     radio_group = 'default'
 
@@ -825,7 +859,7 @@ class ToolZoom(ZoomPanBase):
 class ToolPan(ZoomPanBase):
     """Pan axes with left mouse, zoom with right."""
 
-    default_keymap = mpl.rcParams['keymap.pan']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.pan'])
     description = 'Pan axes with left mouse, zoom with right'
     image = 'move'
     cursor = cursors.MOVE
@@ -890,13 +924,13 @@ class ToolPan(ZoomPanBase):
 
 class ToolHelpBase(ToolBase):
     description = 'Print tool list, shortcuts and description'
-    default_keymap = mpl.rcParams['keymap.help']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.help'])
     image = 'help'
 
     @staticmethod
     def format_shortcut(key_sequence):
         """
-        Converts a shortcut string from the notation used in rc config to the
+        Convert a shortcut string from the notation used in rc config to the
         standard notation for displaying shortcuts, e.g. 'ctrl+a' -> 'Ctrl+A'.
         """
         return (key_sequence if len(key_sequence) == 1 else
@@ -930,7 +964,7 @@ class ToolCopyToClipboardBase(ToolBase):
     """Tool to copy the figure to the clipboard."""
 
     description = 'Copy the canvas figure to clipboard'
-    default_keymap = mpl.rcParams['keymap.copy']
+    default_keymap = property(lambda self: mpl.rcParams['keymap.copy'])
 
     def trigger(self, *args, **kwargs):
         message = "Copy tool is not available"
@@ -939,8 +973,8 @@ class ToolCopyToClipboardBase(ToolBase):
 
 default_tools = {'home': ToolHome, 'back': ToolBack, 'forward': ToolForward,
                  'zoom': ToolZoom, 'pan': ToolPan,
-                 'subplots': 'ToolConfigureSubplots',
-                 'save': 'ToolSaveFigure',
+                 'subplots': ConfigureSubplotsBase,
+                 'save': SaveFigureBase,
                  'grid': ToolGrid,
                  'grid_minor': ToolMinorGrid,
                  'fullscreen': ToolFullScreen,
@@ -950,10 +984,10 @@ default_tools = {'home': ToolHome, 'back': ToolBack, 'forward': ToolForward,
                  'yscale': ToolYScale,
                  'position': ToolCursorPosition,
                  _views_positions: ToolViewsPositions,
-                 'cursor': 'ToolSetCursor',
-                 'rubberband': 'ToolRubberband',
-                 'help': 'ToolHelp',
-                 'copy': 'ToolCopyToClipboard',
+                 'cursor': SetCursorBase,
+                 'rubberband': RubberbandBase,
+                 'help': ToolHelpBase,
+                 'copy': ToolCopyToClipboardBase,
                  }
 """Default tools"""
 

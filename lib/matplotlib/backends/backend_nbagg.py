@@ -20,9 +20,10 @@ except ImportError:
 from matplotlib import is_interactive
 from matplotlib._pylab_helpers import Gcf
 from matplotlib.backend_bases import _Backend, NavigationToolbar2
-from matplotlib.backends.backend_webagg_core import (
-    FigureCanvasWebAggCore, FigureManagerWebAgg, NavigationToolbar2WebAgg,
-    TimerTornado)
+from .backend_webagg_core import (
+    FigureCanvasWebAggCore, FigureManagerWebAgg, NavigationToolbar2WebAgg)
+from .backend_webagg_core import (  # noqa: F401 # pylint: disable=W0611
+    TimerTornado, TimerAsyncio)
 
 
 def connection_info():
@@ -44,8 +45,8 @@ def connection_info():
 
 
 # Note: Version 3.2 and 4.x icons
-# http://fontawesome.io/3.2.1/icons/
-# http://fontawesome.io/
+# https://fontawesome.com/v3.2/icons/
+# https://fontawesome.com/v4.7/icons/
 # the `fa fa-xxx` part targets font-awesome 4, (IPython 3.x)
 # the icon-xxx targets font awesome 3.21 (IPython 2.x)
 _FONT_AWESOME_CLASSES = {
@@ -71,7 +72,7 @@ class NavigationIPy(NavigationToolbar2WebAgg):
 
 
 class FigureManagerNbAgg(FigureManagerWebAgg):
-    ToolbarCls = NavigationIPy
+    _toolbar2_class = ToolbarCls = NavigationIPy
 
     def __init__(self, canvas, num):
         self._shown = False

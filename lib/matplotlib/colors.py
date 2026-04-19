@@ -121,6 +121,12 @@ def is_color_like(c):
         return True
 
 
+def _has_alpha_channel(c):
+    """Return whether *c* is a color with an alpha channel."""
+    # 4-element sequences are interpreted as r, g, b, a
+    return not isinstance(c, str) and len(c) == 4
+
+
 def _check_color_like(**kwargs):
     """
     For each *key, value* pair in *kwargs*, check that *value* is color-like.
@@ -356,9 +362,7 @@ def to_rgba_array(c, alpha=None):
         pass
 
     if isinstance(c, str):
-        raise ValueError("Using a string of single character colors as "
-                         "a color sequence is not supported. The colors can "
-                         "be passed as an explicit list instead.")
+        raise ValueError(f"{c!r} is not a valid color value.")
 
     if len(c) == 0:
         return np.zeros((0, 4), float)
@@ -390,8 +394,17 @@ def to_hex(c, keep_alpha=False):
     """
     Convert *c* to a hex color.
 
-    Uses the ``#rrggbb`` format if *keep_alpha* is False (the default),
-    ``#rrggbbaa`` otherwise.
+    Parameters
+    ----------
+    c : :doc:`color </tutorials/colors/colors>` or `numpy.ma.masked`
+
+    keep_alpha : bool, default: False
+      If False, use the ``#rrggbb`` format, otherwise use ``#rrggbbaa``.
+
+    Returns
+    -------
+    str
+      ``#rrggbb`` or ``#rrggbbaa`` hex color string
     """
     c = to_rgba(c)
     if not keep_alpha:
@@ -495,9 +508,7 @@ def _create_lookup_table(N, data, gamma=1.0):
         adata = np.array(data)
     except Exception as err:
         raise TypeError("data must be convertible to an array") from err
-    shape = adata.shape
-    if len(shape) != 2 or shape[1] != 3:
-        raise ValueError("data must be nx3 format")
+    _api.check_shape((None, 3), data=adata)
 
     x = adata[:, 0]
     y0 = adata[:, 1]
@@ -624,24 +635,20 @@ class Colormap:
         xa[xa < 0] = self._i_under
         xa[mask_bad] = self._i_bad
 
+        lut = self._lut
         if bytes:
-            lut = (self._lut * 255).astype(np.uint8)
-        else:
-            lut = self._lut.copy()  # Don't let alpha modify original _lut.
+            lut = (lut * 255).astype(np.uint8)
 
-        rgba = np.empty(shape=xa.shape + (4,), dtype=lut.dtype)
-        lut.take(xa, axis=0, mode='clip', out=rgba)
+        rgba = lut.take(xa, axis=0, mode='clip')
 
         if alpha is not None:
-            if np.iterable(alpha):
-                alpha = np.asarray(alpha)
-                if alpha.shape != xa.shape:
-                    raise ValueError("alpha is array-like but its shape"
-                                     " %s doesn't match that of X %s" %
-                                     (alpha.shape, xa.shape))
             alpha = np.clip(alpha, 0, 1)
             if bytes:
-                alpha = (alpha * 255).astype(np.uint8)
+                alpha *= 255  # Will be cast to uint8 upon assignment.
+            if alpha.shape not in [(), xa.shape]:
+                raise ValueError(
+                    f"alpha is array-like but its shape {alpha.shape} does "
+                    f"not match that of X {xa.shape}")
             rgba[..., -1] = alpha
 
             # If the "bad" color is all zeros, then ignore alpha input.
@@ -1123,10 +1130,50 @@ class Normalize:
         -----
         Returns 0 if ``vmin == vmax``.
         """
-        self.vmin = _sanitize_extrema(vmin)
-        self.vmax = _sanitize_extrema(vmax)
-        self.clip = clip
-        self._scale = None  # will default to LinearScale for colorbar
+        self._vmin = _sanitize_extrema(vmin)
+        self._vmax = _sanitize_extrema(vmax)
+        self._clip = clip
+        self._scale = None
+        self.callbacks = cbook.CallbackRegistry(signals=["changed"])
+
+    @property
+    def vmin(self):
+        return self._vmin
+
+    @vmin.setter
+    def vmin(self, value):
+        value = _sanitize_extrema(value)
+        if value != self._vmin:
+            self._vmin = value
+            self._changed()
+
+    @property
+    def vmax(self):
+        return self._vmax
+
+    @vmax.setter
+    def vmax(self, value):
+        value = _sanitize_extrema(value)
+        if value != self._vmax:
+            self._vmax = value
+            self._changed()
+
+    @property
+    def clip(self):
+        return self._clip
+
+    @clip.setter
+    def clip(self, value):
+        if value != self._clip:
+            self._clip = value
+            self._changed()
+
+    def _changed(self):
+        """
+        Call this whenever the norm is changed to notify all the
+        callback listeners to the 'changed' signal.
+        """
+        self.callbacks.process('changed')
 
     @staticmethod
     def process_value(value):
@@ -1186,12 +1233,13 @@ class Normalize:
 
         result, is_scalar = self.process_value(value)
 
-        self.autoscale_None(result)
+        if self.vmin is None or self.vmax is None:
+            self.autoscale_None(result)
         # Convert at least to float, without losing precision.
         (vmin,), _ = self.process_value(self.vmin)
         (vmax,), _ = self.process_value(self.vmax)
         if vmin == vmax:
-            result.fill(0)   # Or should it be all masked?  Or 0.5?
+            result.fill(0)  # Or should it be all masked?  Or 0.5?
         elif vmin > vmax:
             raise ValueError("minvalue must be less than or equal to maxvalue")
         else:
@@ -1273,13 +1321,23 @@ class TwoSlopeNorm(Normalize):
         """
 
         super().__init__(vmin=vmin, vmax=vmax)
-        self.vcenter = vcenter
+        self._vcenter = vcenter
         if vcenter is not None and vmax is not None and vcenter >= vmax:
             raise ValueError('vmin, vcenter, and vmax must be in '
                              'ascending order')
         if vcenter is not None and vmin is not None and vcenter <= vmin:
             raise ValueError('vmin, vcenter, and vmax must be in '
                              'ascending order')
+
+    @property
+    def vcenter(self):
+        return self._vcenter
+
+    @vcenter.setter
+    def vcenter(self, value):
+        if value != self._vcenter:
+            self._vcenter = value
+            self._changed()
 
     def autoscale_None(self, A):
         """
@@ -1300,9 +1358,11 @@ class TwoSlopeNorm(Normalize):
 
         if not self.vmin <= self.vcenter <= self.vmax:
             raise ValueError("vmin, vcenter, vmax must increase monotonically")
+        # note that we must extrapolate for tick locators:
         result = np.ma.masked_array(
             np.interp(result, [self.vmin, self.vcenter, self.vmax],
-                      [0, 0.5, 1.]), mask=np.ma.getmask(result))
+                      [0, 0.5, 1], left=-np.inf, right=np.inf),
+            mask=np.ma.getmask(result))
         if is_scalar:
             result = np.atleast_1d(result)[0]
         return result
@@ -1313,8 +1373,8 @@ class TwoSlopeNorm(Normalize):
         (vmin,), _ = self.process_value(self.vmin)
         (vmax,), _ = self.process_value(self.vmax)
         (vcenter,), _ = self.process_value(self.vcenter)
-
-        result = np.interp(value, [0, 0.5, 1.], [vmin, vcenter, vmax])
+        result = np.interp(value, [0, 0.5, 1], [vmin, vcenter, vmax],
+                           left=-np.inf, right=np.inf)
         return result
 
 
@@ -1385,7 +1445,9 @@ class CenteredNorm(Normalize):
 
     @vcenter.setter
     def vcenter(self, vcenter):
-        self._vcenter = vcenter
+        if vcenter != self._vcenter:
+            self._vcenter = vcenter
+            self._changed()
         if self.vmax is not None:
             # recompute halfrange assuming vmin and vmax represent
             # min and max of data
@@ -1413,13 +1475,14 @@ class CenteredNorm(Normalize):
         return super().__call__(value, clip=clip)
 
 
-def _make_norm_from_scale(scale_cls, base_norm_cls=None, *, init=None):
+def make_norm_from_scale(scale_cls, base_norm_cls=None, *, init=None):
     """
-    Decorator for building a `.Normalize` subclass from a `.Scale` subclass.
+    Decorator for building a `.Normalize` subclass from a `~.scale.ScaleBase`
+    subclass.
 
     After ::
 
-        @_make_norm_from_scale(scale_cls)
+        @make_norm_from_scale(scale_cls)
         class norm_cls(Normalize):
             ...
 
@@ -1434,7 +1497,7 @@ def _make_norm_from_scale(scale_cls, base_norm_cls=None, *, init=None):
     a dummy axis).
 
     If the *scale_cls* constructor takes additional parameters, then *init*
-    should be passed to `_make_norm_from_scale`.  It is a callable which is
+    should be passed to `make_norm_from_scale`.  It is a callable which is
     *only* used for its signature.  First, this signature will become the
     signature of *norm_cls*.  Second, the *norm_cls* constructor will bind the
     parameters passed to it using this signature, extract the bound *vmin*,
@@ -1444,13 +1507,30 @@ def _make_norm_from_scale(scale_cls, base_norm_cls=None, *, init=None):
     """
 
     if base_norm_cls is None:
-        return functools.partial(_make_norm_from_scale, scale_cls, init=init)
+        return functools.partial(make_norm_from_scale, scale_cls, init=init)
 
     if init is None:
         def init(vmin=None, vmax=None, clip=False): pass
-    bound_init_signature = inspect.signature(init)
+
+    return _make_norm_from_scale(
+        scale_cls, base_norm_cls, inspect.signature(init))
+
+
+@functools.lru_cache(None)
+def _make_norm_from_scale(scale_cls, base_norm_cls, bound_init_signature):
+    """
+    Helper for `make_norm_from_scale`.
+
+    This function is split out so that it takes a signature object as third
+    argument (as signatures are picklable, contrary to arbitrary lambdas);
+    caching is also used so that different unpickles reuse the same class.
+    """
 
     class Norm(base_norm_cls):
+        def __reduce__(self):
+            return (_picklable_norm_constructor,
+                    (scale_cls, base_norm_cls, bound_init_signature),
+                    self.__dict__)
 
         def __init__(self, *args, **kwargs):
             ba = bound_init_signature.bind(*args, **kwargs)
@@ -1460,9 +1540,14 @@ def _make_norm_from_scale(scale_cls, base_norm_cls=None, *, init=None):
             self._scale = scale_cls(axis=None, **ba.arguments)
             self._trf = self._scale.get_transform()
 
+        __init__.__signature__ = bound_init_signature.replace(parameters=[
+            inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            *bound_init_signature.parameters.values()])
+
         def __call__(self, value, clip=None):
             value, is_scalar = self.process_value(value)
-            self.autoscale_None(value)
+            if self.vmin is None or self.vmax is None:
+                self.autoscale_None(value)
             if self.vmin > self.vmax:
                 raise ValueError("vmin must be less or equal to vmax")
             if self.vmin == self.vmax:
@@ -1497,17 +1582,33 @@ def _make_norm_from_scale(scale_cls, base_norm_cls=None, *, init=None):
                      .reshape(np.shape(value)))
             return value[0] if is_scalar else value
 
-    Norm.__name__ = base_norm_cls.__name__
-    Norm.__qualname__ = base_norm_cls.__qualname__
+        def autoscale(self, A):
+            # i.e. A[np.isfinite(...)], but also for non-array A's
+            in_trf_domain = np.extract(np.isfinite(self._trf.transform(A)), A)
+            return super().autoscale(in_trf_domain)
+
+        def autoscale_None(self, A):
+            in_trf_domain = np.extract(np.isfinite(self._trf.transform(A)), A)
+            return super().autoscale_None(in_trf_domain)
+
+    Norm.__name__ = (
+            f"{scale_cls.__name__}Norm" if base_norm_cls is Normalize
+            else base_norm_cls.__name__)
+    Norm.__qualname__ = (
+            f"{scale_cls.__qualname__}Norm" if base_norm_cls is Normalize
+            else base_norm_cls.__qualname__)
     Norm.__module__ = base_norm_cls.__module__
     Norm.__doc__ = base_norm_cls.__doc__
-    Norm.__init__.__signature__ = bound_init_signature.replace(parameters=[
-        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-        *bound_init_signature.parameters.values()])
+
     return Norm
 
 
-@_make_norm_from_scale(
+def _picklable_norm_constructor(*args):
+    cls = _make_norm_from_scale(*args)
+    return cls.__new__(cls)
+
+
+@make_norm_from_scale(
     scale.FuncScale,
     init=lambda functions, vmin=None, vmax=None, clip=False: None)
 class FuncNorm(Normalize):
@@ -1540,20 +1641,12 @@ class FuncNorm(Normalize):
     """
 
 
-@_make_norm_from_scale(functools.partial(scale.LogScale, nonpositive="mask"))
+@make_norm_from_scale(functools.partial(scale.LogScale, nonpositive="mask"))
 class LogNorm(Normalize):
     """Normalize a given value to the 0-1 range on a log scale."""
 
-    def autoscale(self, A):
-        # docstring inherited.
-        super().autoscale(np.ma.array(A, mask=(A <= 0)))
 
-    def autoscale_None(self, A):
-        # docstring inherited.
-        super().autoscale_None(np.ma.array(A, mask=(A <= 0)))
-
-
-@_make_norm_from_scale(
+@make_norm_from_scale(
     scale.SymmetricalLogScale,
     init=lambda linthresh, linscale=1., vmin=None, vmax=None, clip=False, *,
                 base=10: None)
@@ -1589,6 +1682,38 @@ class SymLogNorm(Normalize):
     @linthresh.setter
     def linthresh(self, value):
         self._scale.linthresh = value
+
+
+@make_norm_from_scale(
+    scale.AsinhScale,
+    init=lambda linear_width=1, vmin=None, vmax=None, clip=False: None)
+class AsinhNorm(Normalize):
+    """
+    The inverse hyperbolic sine scale is approximately linear near
+    the origin, but becomes logarithmic for larger positive
+    or negative values. Unlike the `SymLogNorm`, the transition between
+    these linear and logarithmic regions is smooth, which may reduce
+    the risk of visual artifacts.
+
+    .. note::
+
+       This API is provisional and may be revised in the future
+       based on early user feedback.
+
+    Parameters
+    ----------
+    linear_width : float, default: 1
+        The effective width of the linear region, beyond which
+        the transformation becomes asymptotically logarithmic
+    """
+
+    @property
+    def linear_width(self):
+        return self._scale.linear_width
+
+    @linear_width.setter
+    def linear_width(self, value):
+        self._scale.linear_width = value
 
 
 class PowerNorm(Normalize):
@@ -1648,19 +1773,23 @@ class BoundaryNorm(Normalize):
 
     Unlike `Normalize` or `LogNorm`, `BoundaryNorm` maps values to integers
     instead of to the interval 0-1.
-
-    Mapping to the 0-1 interval could have been done via piece-wise linear
-    interpolation, but using integers seems simpler, and reduces the number of
-    conversions back and forth between integer and floating point.
     """
+
+    # Mapping to the 0-1 interval could have been done via piece-wise linear
+    # interpolation, but using integers seems simpler, and reduces the number
+    # of conversions back and forth between int and float.
+
     def __init__(self, boundaries, ncolors, clip=False, *, extend='neither'):
         """
         Parameters
         ----------
         boundaries : array-like
-            Monotonically increasing sequence of at least 2 boundaries.
+            Monotonically increasing sequence of at least 2 bin edges:  data
+            falling in the n-th bin will be mapped to the n-th color.
+
         ncolors : int
             Number of colors in the colormap to be used.
+
         clip : bool, optional
             If clip is ``True``, out of range values are mapped to 0 if they
             are below ``boundaries[0]`` or mapped to ``ncolors - 1`` if they
@@ -1670,6 +1799,7 @@ class BoundaryNorm(Normalize):
             they are below ``boundaries[0]`` or mapped to *ncolors* if they are
             above ``boundaries[-1]``. These are then converted to valid indices
             by `Colormap.__call__`.
+
         extend : {'neither', 'both', 'min', 'max'}, default: 'neither'
             Extend the number of bins to include one or both of the
             regions beyond the boundaries.  For example, if ``extend``
@@ -1679,18 +1809,12 @@ class BoundaryNorm(Normalize):
             `~matplotlib.colorbar.Colorbar` will be drawn with
             the triangle extension on the left or lower end.
 
-        Returns
-        -------
-        int16 scalar or array
-
         Notes
         -----
-        *boundaries* defines the edges of bins, and data falling within a bin
-        is mapped to the color with the same index.
-
-        If the number of bins, including any extensions, is less than
-        *ncolors*, the color index is chosen by linear interpolation, mapping
-        the ``[0, nbins - 1]`` range onto the ``[0, ncolors - 1]`` range.
+        If there are fewer bins (including extensions) than colors, then the
+        color index is chosen by linearly interpolating the ``[0, nbins - 1]``
+        range onto the ``[0, ncolors - 1]`` range, effectively skipping some
+        colors in the middle of the colormap.
         """
         if clip and extend != 'neither':
             raise ValueError("'clip=True' is not compatible with 'extend'")
@@ -1719,6 +1843,10 @@ class BoundaryNorm(Normalize):
                              "number of bins")
 
     def __call__(self, value, clip=None):
+        """
+        This method behaves similarly to `.Normalize.__call__`, except that it
+        returns integers or arrays of int16.
+        """
         if clip is None:
             clip = self.clip
 
@@ -2318,7 +2446,7 @@ class LightSource:
 
     def blend_overlay(self, rgb, intensity):
         """
-        Combines an rgb image with an intensity map using "overlay" blending.
+        Combine an rgb image with an intensity map using "overlay" blending.
 
         Parameters
         ----------

@@ -20,7 +20,7 @@
  To improve the hinting of the fonts, this code uses a hack
  presented here:
 
- http://antigrain.com/research/font_rasterization/index.html
+ http://agg.sourceforge.net/antigrain.com/research/font_rasterization/index.html
 
  The idea is to limit the effect of hinting in the x-direction, while
  preserving hinting in the y-direction.  Since freetype does not
@@ -43,9 +43,23 @@
 
 FT_Library _ft2Library;
 
+// FreeType error codes; loaded as per fterror.h.
+static char const* ft_error_string(FT_Error error) {
+#undef __FTERRORS_H__
+#define FT_ERROR_START_LIST     switch (error) {
+#define FT_ERRORDEF( e, v, s )    case v: return s;
+#define FT_ERROR_END_LIST         default: return NULL; }
+#include FT_ERRORS_H
+}
+
 void throw_ft_error(std::string message, FT_Error error) {
+    char const* s = ft_error_string(error);
     std::ostringstream os("");
-    os << message << " (error code 0x" << std::hex << error << ")";
+    if (s) {
+        os << message << " (" << s << "; error code 0x" << std::hex << error << ")";
+    } else {  // Should not occur, but don't add another error from failed lookup.
+        os << message << " (error code 0x" << std::hex << error << ")";
+    }
     throw std::runtime_error(os.str());
 }
 
@@ -99,13 +113,13 @@ void FT2Image::draw_bitmap(FT_Bitmap *bitmap, FT_Int x, FT_Int y)
     FT_Int char_width = bitmap->width;
     FT_Int char_height = bitmap->rows;
 
-    FT_Int x1 = CLAMP(x, 0, image_width);
-    FT_Int y1 = CLAMP(y, 0, image_height);
-    FT_Int x2 = CLAMP(x + char_width, 0, image_width);
-    FT_Int y2 = CLAMP(y + char_height, 0, image_height);
+    FT_Int x1 = std::min(std::max(x, 0), image_width);
+    FT_Int y1 = std::min(std::max(y, 0), image_height);
+    FT_Int x2 = std::min(std::max(x + char_width, 0), image_width);
+    FT_Int y2 = std::min(std::max(y + char_height, 0), image_height);
 
-    FT_Int x_start = MAX(0, -x);
-    FT_Int y_offset = y1 - MAX(0, -y);
+    FT_Int x_start = std::max(0, -x);
+    FT_Int y_offset = y1 - std::max(0, -y);
 
     if (bitmap->pixel_mode == FT_PIXEL_MODE_GRAY) {
         for (FT_Int i = y1; i < y2; ++i) {
@@ -324,14 +338,7 @@ FT2Font::FT2Font(FT_Open_Args &open_args, long hinting_factor_) : image(), face(
     clear();
 
     FT_Error error = FT_Open_Face(_ft2Library, &open_args, 0, &face);
-
-    if (error == FT_Err_Unknown_File_Format) {
-        throw std::runtime_error("Can not load face.  Unknown file format.");
-    } else if (error == FT_Err_Cannot_Open_Resource) {
-        throw std::runtime_error("Can not load face.  Can not open resource.");
-    } else if (error == FT_Err_Invalid_File_Format) {
-        throw std::runtime_error("Can not load face.  Invalid file format.");
-    } else if (error) {
+    if (error) {
         throw_ft_error("Can not load face", error);
     }
 
@@ -544,8 +551,8 @@ void FT2Font::get_bitmap_offset(long *x, long *y)
 
 void FT2Font::draw_glyphs_to_bitmap(bool antialiased)
 {
-    size_t width = (bbox.xMax - bbox.xMin) / 64 + 2;
-    size_t height = (bbox.yMax - bbox.yMin) / 64 + 2;
+    long width = (bbox.xMax - bbox.xMin) / 64 + 2;
+    long height = (bbox.yMax - bbox.yMin) / 64 + 2;
 
     image.resize(width, height);
 
