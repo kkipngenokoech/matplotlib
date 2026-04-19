@@ -11,8 +11,7 @@ from numpy.testing import (assert_array_equal, assert_approx_equal,
                            assert_array_almost_equal)
 import pytest
 
-from matplotlib import _api
-import matplotlib.cbook as cbook
+from matplotlib import _api, cbook
 import matplotlib.colors as mcolors
 from matplotlib.cbook import delete_masked_points
 
@@ -183,10 +182,10 @@ class Test_callback_registry:
         self.callbacks = cbook.CallbackRegistry()
 
     def connect(self, s, func, pickle):
-        cid = self.callbacks.connect(s, func)
         if pickle:
-            self.callbacks._pickled_cids.add(cid)
-        return cid
+            return self.callbacks.connect(s, func)
+        else:
+            return self.callbacks._connect_picklable(s, func)
 
     def disconnect(self, cid):
         return self.callbacks.disconnect(cid)
@@ -198,11 +197,13 @@ class Test_callback_registry:
         return count1
 
     def is_empty(self):
+        np.testing.break_cycles()
         assert self.callbacks._func_cid_map == {}
         assert self.callbacks.callbacks == {}
         assert self.callbacks._pickled_cids == set()
 
     def is_not_empty(self):
+        np.testing.break_cycles()
         assert self.callbacks._func_cid_map != {}
         assert self.callbacks.callbacks != {}
 
@@ -359,6 +360,73 @@ def test_callbackregistry_custom_exception_handler(monkeypatch, cb, excp):
         cbook, "_get_running_interactive_framework", lambda: None)
     with pytest.raises(excp):
         cb.process('foo')
+
+
+def test_callbackregistry_signals():
+    cr = cbook.CallbackRegistry(signals=["foo"])
+    results = []
+    def cb(x): results.append(x)
+    cr.connect("foo", cb)
+    with pytest.raises(ValueError):
+        cr.connect("bar", cb)
+    cr.process("foo", 1)
+    with pytest.raises(ValueError):
+        cr.process("bar", 1)
+    assert results == [1]
+
+
+def test_callbackregistry_blocking():
+    # Needs an exception handler for interactive testing environments
+    # that would only print this out instead of raising the exception
+    def raise_handler(excp):
+        raise excp
+    cb = cbook.CallbackRegistry(exception_handler=raise_handler)
+    def test_func1():
+        raise ValueError("1 should be blocked")
+    def test_func2():
+        raise ValueError("2 should be blocked")
+    cb.connect("test1", test_func1)
+    cb.connect("test2", test_func2)
+
+    # block all of the callbacks to make sure they aren't processed
+    with cb.blocked():
+        cb.process("test1")
+        cb.process("test2")
+
+    # block individual callbacks to make sure the other is still processed
+    with cb.blocked(signal="test1"):
+        # Blocked
+        cb.process("test1")
+        # Should raise
+        with pytest.raises(ValueError, match="2 should be blocked"):
+            cb.process("test2")
+
+    # Make sure the original callback functions are there after blocking
+    with pytest.raises(ValueError, match="1 should be blocked"):
+        cb.process("test1")
+    with pytest.raises(ValueError, match="2 should be blocked"):
+        cb.process("test2")
+
+
+@pytest.mark.parametrize('line, result', [
+    ('a : no_comment', 'a : no_comment'),
+    ('a : "quoted str"', 'a : "quoted str"'),
+    ('a : "quoted str" # comment', 'a : "quoted str"'),
+    ('a : "#000000"', 'a : "#000000"'),
+    ('a : "#000000" # comment', 'a : "#000000"'),
+    ('a : ["#000000", "#FFFFFF"]', 'a : ["#000000", "#FFFFFF"]'),
+    ('a : ["#000000", "#FFFFFF"] # comment', 'a : ["#000000", "#FFFFFF"]'),
+    ('a : val  # a comment "with quotes"', 'a : val'),
+    ('# only comment "with quotes" xx', ''),
+])
+def test_strip_comment(line, result):
+    """Strip everything from the first unqouted #."""
+    assert cbook._strip_comment(line) == result
+
+
+def test_strip_comment_invalid():
+    with pytest.raises(ValueError, match="Missing closing quote"):
+        cbook._strip_comment('grid.color: "aa')
 
 
 def test_sanitize_sequence():
@@ -574,6 +642,13 @@ def test_reshape2d():
     assert isinstance(xnew[0], np.ndarray) and xnew[0].shape == (1,)
     assert isinstance(xnew[1], np.ndarray) and xnew[1].shape == (1,)
     assert isinstance(xnew[2], np.ndarray) and xnew[2].shape == (1,)
+
+    # Test a list of zero-dimensional arrays
+    x = [np.array(0), np.array(1), np.array(2)]
+    xnew = cbook._reshape_2D(x, 'x')
+    assert isinstance(xnew, list)
+    assert len(xnew) == 1
+    assert isinstance(xnew[0], np.ndarray) and xnew[0].shape == (3,)
 
     # Now test with a list of lists with different lengths, which means the
     # array will internally be converted to a 1D object array of lists

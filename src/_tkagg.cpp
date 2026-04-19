@@ -50,7 +50,7 @@ static int convert_voidptr(PyObject *obj, void *p)
 // Global vars for Tk functions.  We load these symbols from the tkinter
 // extension module or loaded Tk libraries at run-time.
 static Tk_FindPhoto_t TK_FIND_PHOTO;
-static Tk_PhotoPutBlock_NoComposite_t TK_PHOTO_PUT_BLOCK_NO_COMPOSITE;
+static Tk_PhotoPutBlock_t TK_PHOTO_PUT_BLOCK;
 #ifdef WIN32_DLL
 // Global vars for Tcl functions.  We load these symbols from the tkinter
 // extension module or loaded Tcl libraries at run-time.
@@ -63,13 +63,16 @@ static PyObject *mpl_tk_blit(PyObject *self, PyObject *args)
     char const *photo_name;
     int height, width;
     unsigned char *data_ptr;
+    int comp_rule;
+    int put_retval;
     int o0, o1, o2, o3;
     int x1, x2, y1, y2;
     Tk_PhotoHandle photo;
     Tk_PhotoImageBlock block;
-    if (!PyArg_ParseTuple(args, "O&s(iiO&)(iiii)(iiii):blit",
+    if (!PyArg_ParseTuple(args, "O&s(iiO&)i(iiii)(iiii):blit",
                           convert_voidptr, &interp, &photo_name,
                           &height, &width, convert_voidptr, &data_ptr,
+                          &comp_rule,
                           &o0, &o1, &o2, &o3,
                           &x1, &x2, &y1, &y2)) {
         goto exit;
@@ -82,7 +85,12 @@ static PyObject *mpl_tk_blit(PyObject *self, PyObject *args)
         PyErr_SetString(PyExc_ValueError, "Attempting to draw out of bounds");
         goto exit;
     }
+    if (comp_rule != TK_PHOTO_COMPOSITE_OVERLAY && comp_rule != TK_PHOTO_COMPOSITE_SET) {
+        PyErr_SetString(PyExc_ValueError, "Invalid comp_rule argument");
+        goto exit;
+    }
 
+    Py_BEGIN_ALLOW_THREADS
     block.pixelPtr = data_ptr + 4 * ((height - y2) * width + x1);
     block.width = x2 - x1;
     block.height = y2 - y1;
@@ -92,8 +100,13 @@ static PyObject *mpl_tk_blit(PyObject *self, PyObject *args)
     block.offset[1] = o1;
     block.offset[2] = o2;
     block.offset[3] = o3;
-    TK_PHOTO_PUT_BLOCK_NO_COMPOSITE(
-        photo, &block, x1, height - y2, x2 - x1, y2 - y1);
+    put_retval = TK_PHOTO_PUT_BLOCK(
+        interp, photo, &block, x1, height - y2, x2 - x1, y2 - y1, comp_rule);
+    Py_END_ALLOW_THREADS
+    if (put_retval == TCL_ERROR) {
+        return PyErr_NoMemory();
+    }
+
 exit:
     if (PyErr_Occurred()) {
         return NULL;
@@ -219,8 +232,8 @@ int load_tk(T lib)
     return
         !!(TK_FIND_PHOTO =
             (Tk_FindPhoto_t)dlsym(lib, "Tk_FindPhoto")) +
-        !!(TK_PHOTO_PUT_BLOCK_NO_COMPOSITE =
-            (Tk_PhotoPutBlock_NoComposite_t)dlsym(lib, "Tk_PhotoPutBlock_NoComposite"));
+        !!(TK_PHOTO_PUT_BLOCK =
+            (Tk_PhotoPutBlock_t)dlsym(lib, "Tk_PhotoPutBlock"));
 }
 
 #ifdef WIN32_DLL
@@ -243,25 +256,32 @@ int load_tcl(T lib)
 
 void load_tkinter_funcs(void)
 {
-    // Load Tcl/Tk functions by searching all modules in current process.
-    HMODULE hMods[1024];
-    HANDLE hProcess;
-    DWORD cbNeeded;
-    unsigned int i;
+    HANDLE process = GetCurrentProcess();  // Pseudo-handle, doesn't need closing.
+    HMODULE* modules = NULL;
+    DWORD size;
+    if (!EnumProcessModules(process, NULL, 0, &size)) {
+        PyErr_SetFromWindowsErr(0);
+        goto exit;
+    }
+    if (!(modules = static_cast<HMODULE*>(malloc(size)))) {
+        PyErr_NoMemory();
+        goto exit;
+    }
+    if (!EnumProcessModules(process, modules, size, &size)) {
+        PyErr_SetFromWindowsErr(0);
+        goto exit;
+    }
     bool tcl_ok = false, tk_ok = false;
-    // Returns pseudo-handle that does not need to be closed
-    hProcess = GetCurrentProcess();
-    // Iterate through modules in this process looking for Tcl/Tk names.
-    if (EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded)) {
-        for (i = 0; i < (cbNeeded / sizeof(HMODULE)); i++) {
-            if (!tcl_ok) {
-                tcl_ok = load_tcl(hMods[i]);
-            }
-            if (!tk_ok) {
-                tk_ok = load_tk(hMods[i]);
-            }
+    for (unsigned i = 0; i < size / sizeof(HMODULE); ++i) {
+        if (!tcl_ok) {
+            tcl_ok = load_tcl(modules[i]);
+        }
+        if (!tk_ok) {
+            tk_ok = load_tk(modules[i]);
         }
     }
+exit:
+    free(modules);
 }
 
 #else  // not Windows
@@ -323,7 +343,7 @@ exit:
 #endif // end not Windows
 
 static PyModuleDef _tkagg_module = {
-    PyModuleDef_HEAD_INIT, "_tkagg", "", -1, functions, NULL, NULL, NULL, NULL
+    PyModuleDef_HEAD_INIT, "_tkagg", NULL, -1, functions
 };
 
 #pragma GCC visibility push(default)
@@ -341,8 +361,8 @@ PyMODINIT_FUNC PyInit__tkagg(void)
     } else if (!TK_FIND_PHOTO) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to load Tk_FindPhoto");
         return NULL;
-    } else if (!TK_PHOTO_PUT_BLOCK_NO_COMPOSITE) {
-        PyErr_SetString(PyExc_RuntimeError, "Failed to load Tk_PhotoPutBlock_NoComposite");
+    } else if (!TK_PHOTO_PUT_BLOCK) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to load Tk_PhotoPutBlock");
         return NULL;
     }
     return PyModule_Create(&_tkagg_module);

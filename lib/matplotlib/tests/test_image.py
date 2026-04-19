@@ -115,12 +115,12 @@ def test_imshow_antialiased(fig_test, fig_ref,
     A = np.random.rand(int(dpi * img_size), int(dpi * img_size))
     for fig in [fig_test, fig_ref]:
         fig.set_size_inches(fig_size, fig_size)
-    axs = fig_test.subplots()
-    axs.set_position([0, 0, 1, 1])
-    axs.imshow(A, interpolation='antialiased')
-    axs = fig_ref.subplots()
-    axs.set_position([0, 0, 1, 1])
-    axs.imshow(A, interpolation=interpolation)
+    ax = fig_test.subplots()
+    ax.set_position([0, 0, 1, 1])
+    ax.imshow(A, interpolation='antialiased')
+    ax = fig_ref.subplots()
+    ax.set_position([0, 0, 1, 1])
+    ax.imshow(A, interpolation=interpolation)
 
 
 @check_figures_equal(extensions=['png'])
@@ -131,14 +131,14 @@ def test_imshow_zoom(fig_test, fig_ref):
     A = np.random.rand(int(dpi * 3), int(dpi * 3))
     for fig in [fig_test, fig_ref]:
         fig.set_size_inches(2.9, 2.9)
-    axs = fig_test.subplots()
-    axs.imshow(A, interpolation='antialiased')
-    axs.set_xlim([10, 20])
-    axs.set_ylim([10, 20])
-    axs = fig_ref.subplots()
-    axs.imshow(A, interpolation='nearest')
-    axs.set_xlim([10, 20])
-    axs.set_ylim([10, 20])
+    ax = fig_test.subplots()
+    ax.imshow(A, interpolation='antialiased')
+    ax.set_xlim([10, 20])
+    ax.set_ylim([10, 20])
+    ax = fig_ref.subplots()
+    ax.imshow(A, interpolation='nearest')
+    ax.set_xlim([10, 20])
+    ax.set_ylim([10, 20])
 
 
 @check_figures_equal()
@@ -337,11 +337,13 @@ def test_cursor_data():
 
 
 @pytest.mark.parametrize(
-    "data, text_without_colorbar, text_with_colorbar", [
-        ([[10001, 10000]], "[1e+04]", "[10001]"),
-        ([[.123, .987]], "[0.123]", "[0.123]"),
+    "data, text", [
+        ([[10001, 10000]], "[10001.000]"),
+        ([[.123, .987]], "[0.123]"),
+        ([[np.nan, 1, 2]], "[]"),
+        ([[1, 1+1e-15]], "[1.0000000000000000]"),
     ])
-def test_format_cursor_data(data, text_without_colorbar, text_with_colorbar):
+def test_format_cursor_data(data, text):
     from matplotlib.backend_bases import MouseEvent
 
     fig, ax = plt.subplots()
@@ -349,16 +351,7 @@ def test_format_cursor_data(data, text_without_colorbar, text_with_colorbar):
 
     xdisp, ydisp = ax.transData.transform([0, 0])
     event = MouseEvent('motion_notify_event', fig.canvas, xdisp, ydisp)
-    assert im.get_cursor_data(event) == data[0][0]
-    assert im.format_cursor_data(im.get_cursor_data(event)) \
-        == text_without_colorbar
-
-    fig.colorbar(im)
-    fig.canvas.draw()  # This is necessary to set up the colorbar formatter.
-
-    assert im.get_cursor_data(event) == data[0][0]
-    assert im.format_cursor_data(im.get_cursor_data(event)) \
-        == text_with_colorbar
+    assert im.format_cursor_data(im.get_cursor_data(event)) == text
 
 
 @image_comparison(['image_clip'], style='mpl20')
@@ -984,7 +977,7 @@ def test_imshow_bignumbers_real():
 def test_empty_imshow(make_norm):
     fig, ax = plt.subplots()
     with pytest.warns(UserWarning,
-                      match="Attempting to set identical left == right"):
+                      match="Attempting to set identical low and high xlims"):
         im = ax.imshow([[]], norm=make_norm())
     im.set_extent([-5, 5, -5, 5])
     fig.canvas.draw()
@@ -1017,8 +1010,8 @@ def test_imshow_bool():
 def test_full_invalid():
     fig, ax = plt.subplots()
     ax.imshow(np.full((10, 10), np.nan))
-    with pytest.warns(UserWarning):
-        fig.canvas.draw()
+
+    fig.canvas.draw()
 
 
 @pytest.mark.parametrize("fmt,counted",
@@ -1328,3 +1321,98 @@ def test_nonuniform_and_pcolor():
         ax.set_axis_off()
         # NonUniformImage "leaks" out of extents, not PColorImage.
         ax.set(xlim=(0, 10))
+
+
+@image_comparison(["rgba_antialias.png"], style="mpl20",
+                  remove_text=True)
+def test_rgba_antialias():
+    fig, axs = plt.subplots(2, 2, figsize=(3.5, 3.5), sharex=False,
+                            sharey=False, constrained_layout=True)
+    N = 250
+    aa = np.ones((N, N))
+    aa[::2, :] = -1
+
+    x = np.arange(N) / N - 0.5
+    y = np.arange(N) / N - 0.5
+
+    X, Y = np.meshgrid(x, y)
+    R = np.sqrt(X**2 + Y**2)
+    f0 = 10
+    k = 75
+    # aliased concentric circles
+    a = np.sin(np.pi * 2 * (f0 * R + k * R**2 / 2))
+
+    # stripes on lhs
+    a[:int(N/2), :][R[:int(N/2), :] < 0.4] = -1
+    a[:int(N/2), :][R[:int(N/2), :] < 0.3] = 1
+    aa[:, int(N/2):] = a[:, int(N/2):]
+
+    # set some over/unders and NaNs
+    aa[20:50, 20:50] = np.NaN
+    aa[70:90, 70:90] = 1e6
+    aa[70:90, 20:30] = -1e6
+    aa[70:90, 195:215] = 1e6
+    aa[20:30, 195:215] = -1e6
+
+    cmap = copy(plt.cm.RdBu_r)
+    cmap.set_over('yellow')
+    cmap.set_under('cyan')
+
+    axs = axs.flatten()
+    # zoom in
+    axs[0].imshow(aa, interpolation='nearest', cmap=cmap, vmin=-1.2, vmax=1.2)
+    axs[0].set_xlim([N/2-25, N/2+25])
+    axs[0].set_ylim([N/2+50, N/2-10])
+
+    # no anti-alias
+    axs[1].imshow(aa, interpolation='nearest', cmap=cmap, vmin=-1.2, vmax=1.2)
+
+    # data antialias: Note no purples, and white in circle.  Note
+    # that alternating red and blue stripes become white.
+    axs[2].imshow(aa, interpolation='antialiased', interpolation_stage='data',
+                  cmap=cmap, vmin=-1.2, vmax=1.2)
+
+    # rgba antialias: Note purples at boundary with circle.  Note that
+    # alternating red and blue stripes become purple
+    axs[3].imshow(aa, interpolation='antialiased', interpolation_stage='rgba',
+                  cmap=cmap, vmin=-1.2, vmax=1.2)
+
+
+# We check for the warning with a draw() in the test, but we also need to
+# filter the warning as it is emitted by the figure test decorator
+@pytest.mark.filterwarnings(r'ignore:Data with more than .* '
+                            'cannot be accurately displayed')
+@pytest.mark.parametrize('origin', ['upper', 'lower'])
+@pytest.mark.parametrize(
+    'dim, size, msg', [['row', 2**23, r'2\*\*23 columns'],
+                       ['col', 2**24, r'2\*\*24 rows']])
+@check_figures_equal(extensions=('png', ))
+def test_large_image(fig_test, fig_ref, dim, size, msg, origin):
+    # Check that Matplotlib downsamples images that are too big for AGG
+    # See issue #19276. Currently the fix only works for png output but not
+    # pdf or svg output.
+    ax_test = fig_test.subplots()
+    ax_ref = fig_ref.subplots()
+
+    array = np.zeros((1, size + 2))
+    array[:, array.size // 2:] = 1
+    if dim == 'col':
+        array = array.T
+    im = ax_test.imshow(array, vmin=0, vmax=1,
+                        aspect='auto', extent=(0, 1, 0, 1),
+                        interpolation='none',
+                        origin=origin)
+
+    with pytest.warns(UserWarning,
+                      match=f'Data with more than {msg} cannot be '
+                      'accurately displayed.'):
+        fig_test.canvas.draw()
+
+    array = np.zeros((1, 2))
+    array[:, 1] = 1
+    if dim == 'col':
+        array = array.T
+    im = ax_ref.imshow(array, vmin=0, vmax=1, aspect='auto',
+                       extent=(0, 1, 0, 1),
+                       interpolation='none',
+                       origin=origin)

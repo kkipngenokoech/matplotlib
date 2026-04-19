@@ -1,5 +1,5 @@
-Reference
-=========
+API Reference
+=============
 
 When using the library you will typically create
 :doc:`Figure <figure_api>` and :doc:`Axes <axes_api>` objects and
@@ -65,7 +65,9 @@ Alphabetical list of modules:
    font_manager_api.rst
    fontconfig_pattern_api.rst
    gridspec_api.rst
+   hatch_api.rst
    image_api.rst
+   layout_engine_api.rst
    legend_api.rst
    legend_handler_api.rst
    lines_api.rst
@@ -82,6 +84,7 @@ Alphabetical list of modules:
    rcsetup_api.rst
    sankey_api.rst
    scale_api.rst
+   sphinxext_mathmpl_api.rst
    sphinxext_plot_directive_api.rst
    spines_api.rst
    style_api.rst
@@ -100,21 +103,6 @@ Alphabetical list of modules:
    widgets_api.rst
    _api_api.rst
    _enums_api.rst
-
-Toolkits
---------
-
-:ref:`toolkits-index` are collections of application-specific functions that extend
-Matplotlib. The following toolkits are included:
-
-.. toctree::
-   :hidden:
-
-   toolkits/index.rst
-
-.. toctree::
-   :maxdepth: 1
-
    toolkits/mplot3d.rst
    toolkits/axes_grid1.rst
    toolkits/axisartist.rst
@@ -165,7 +153,7 @@ Further reading:
 - Most of the :ref:`examples <examples-index>` use the object-oriented approach
    (except for the pyplot section)
 
-The pylab API (disapproved)
+The pylab API (discouraged)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. automodule:: pylab

@@ -14,14 +14,15 @@ When installing through a package manager like ``pip`` or ``conda``, the
 mandatory dependencies are automatically installed. This list is mainly for
 reference.
 
-* `Python <https://www.python.org/downloads/>`_ (>= 3.7)
-* `NumPy <https://numpy.org>`_ (>= 1.17)
+* `Python <https://www.python.org/downloads/>`_ (>= 3.8)
+* `NumPy <https://numpy.org>`_ (>= 1.19)
 * `setuptools <https://setuptools.readthedocs.io/en/latest/>`_
 * `cycler <https://matplotlib.org/cycler/>`_ (>= 0.10.0)
-* `dateutil <https://pypi.org/project/python-dateutil>`_ (>= 2.7)
+* `dateutil <https://pypi.org/project/python-dateutil/>`_ (>= 2.7)
 * `kiwisolver <https://github.com/nucleic/kiwi>`_ (>= 1.0.1)
 * `Pillow <https://pillow.readthedocs.io/en/latest/>`_ (>= 6.2)
 * `pyparsing <https://pypi.org/project/pyparsing/>`_ (>=2.2.1)
+* `fontTools <https://fonttools.readthedocs.io/en/latest/>`_ (>=4.22.0)
 
 
 .. _optional_dependencies:
@@ -39,22 +40,25 @@ Matplotlib figures can be rendered to various user interfaces. See
 :ref:`what-is-a-backend` for more details on the optional Matplotlib backends
 and the capabilities they provide.
 
-* Tk_ (>= 8.3, != 8.6.0 or 8.6.1) [#]_: for the Tk-based backends.
-* PyQt5_ or PySide2_: for the Qt5-based backends.
-* PyGObject_: for the GTK3-based backends [#]_.
+* Tk_ (>= 8.4, != 8.6.0 or 8.6.1) [#]_: for the Tk-based backends.
+* PyQt6_ (>= 6.1), PySide6_, PyQt5_, or PySide2_: for the Qt-based backends.
+* PyGObject_: for the GTK-based backends [#]_.
 * wxPython_ (>= 4) [#]_: for the wx-based backends.
-* pycairo_ (>= 1.11.0) or cairocffi_ (>= 0.8): for the GTK3 and/or cairo-based
+* pycairo_ (>= 1.11.0) or cairocffi_ (>= 0.8): for the GTK and/or cairo-based
   backends.
-* Tornado_: for the WebAgg backend.
+* Tornado_ (>=5): for the WebAgg backend.
+* macOS (>=10.12): for the macosx backend.
 
 .. _Tk: https://docs.python.org/3/library/tk.html
-.. _PyQt5: https://pypi.org/project/PyQt5
-.. _PySide2: https://pypi.org/project/PySide2
+.. _PyQt5: https://pypi.org/project/PyQt5/
+.. _PySide2: https://pypi.org/project/PySide2/
+.. _PyQt6: https://pypi.org/project/PyQt6/
+.. _PySide6: https://pypi.org/project/PySide6/
 .. _PyGObject: https://pygobject.readthedocs.io/en/latest/
 .. _wxPython: https://www.wxpython.org/
 .. _pycairo: https://pycairo.readthedocs.io/en/latest/
 .. _cairocffi: https://cairocffi.readthedocs.io/en/latest/
-.. _Tornado: https://pypi.org/project/tornado
+.. _Tornado: https://pypi.org/project/tornado/
 
 .. [#] Tk is part of most standard Python installations, but it's not part of
        Python itself and thus may not be present in rare cases.
@@ -101,7 +105,7 @@ rasterize characters differently) and of Qhull.  As an exception, Matplotlib
 defaults to the system version of FreeType on AIX.
 
 To force Matplotlib to use a copy of FreeType or Qhull already installed in
-your system, create a :file:`setup.cfg` file with the following contents:
+your system, create a :file:`mplsetup.cfg` file with the following contents:
 
 .. code-block:: cfg
 
@@ -221,9 +225,13 @@ Required:
 
 * a minimal working LaTeX distribution
 * `Graphviz <http://www.graphviz.org/download>`_
-* the LaTeX packages *cm-super* and *dvipng* (if your OS bundles TeXLive, the
+* the following LaTeX packages (if your OS bundles TeXLive, the
   "complete" version of the installer, e.g. "texlive-full" or "texlive-all",
-  will often automatically include these packages)
+  will often automatically include these packages):
+
+  * `cm-super <https://ctan.org/pkg/cm-super>`_
+  * `dvipng <https://ctan.org/pkg/dvipng>`_
+  * `underscore <https://ctan.org/pkg/underscore>`_
 
 Optional, but recommended:
 

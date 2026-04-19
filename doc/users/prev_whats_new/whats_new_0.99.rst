@@ -1,7 +1,7 @@
 .. _whats-new-0-99:
 
-New in matplotlib 0.99
-======================
+What's new in Matplotlib 0.99 (Aug 29, 2009)
+============================================
 
 .. contents:: Table of Contents
    :depth: 2
@@ -112,7 +112,7 @@ that denote the data limits -- in various arbitrary locations.  No
 longer are your axis lines constrained to be a simple rectangle around
 the figure -- you can turn on or off left, bottom, right and top, as
 well as "detach" the spine to offset it away from the data.  See
-:doc:`/gallery/ticks_and_spines/spine_placement_demo` and
+:doc:`/gallery/spines/spine_placement_demo` and
 :class:`matplotlib.spines.Spine`.
 
 .. plot::

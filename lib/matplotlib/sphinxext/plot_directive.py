@@ -16,7 +16,7 @@ The source code for the plot may be included in one of three ways:
 
      .. plot:: path/to/plot.py
 
-        The plot's caption.
+        The plot caption.
 
    Additionally, one may specify the name of a function to call (with
    no arguments) immediately after importing the module::
@@ -266,6 +266,7 @@ def _copy_css_file(app, exc):
     if exc is None and app.builder.format == 'html':
         src = cbook._get_data_path('plot_directive/plot_directive.css')
         dst = app.outdir / Path('_static')
+        dst.mkdir(exist_ok=True)
         shutil.copy(src, dst)
 
 
@@ -865,10 +866,11 @@ def run(arguments, content, options, state_machine, state, lineno):
                     shutil.copyfile(fn, destimg)
 
     # copy script (if necessary)
-    Path(dest_dir, output_base + source_ext).write_text(
-        doctest.script_from_examples(code)
-        if source_file_name == rst_file and is_doctest
-        else code,
-        encoding='utf-8')
+    if config.plot_html_show_source_link:
+        Path(dest_dir, output_base + source_ext).write_text(
+            doctest.script_from_examples(code)
+            if source_file_name == rst_file and is_doctest
+            else code,
+            encoding='utf-8')
 
     return errors

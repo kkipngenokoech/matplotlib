@@ -42,10 +42,9 @@ exclude =
 
 per-file-ignores =
     setup.py: E402
-    setupext.py: E501
     tests.py: F401
 
-    lib/matplotlib/__init__.py: F401
+    lib/matplotlib/__init__.py: E402, F401
     lib/matplotlib/_api/__init__.py: F401
     lib/matplotlib/_cm.py: E122, E202, E203, E302
     lib/matplotlib/_mathtext.py: E221, E251
@@ -85,7 +84,7 @@ per-file-ignores =
     lib/mpl_toolkits/tests/conftest.py: F401
     lib/pylab.py: F401, F403
 
-    doc/conf.py: E402, E501
+    doc/conf.py: E402
     tutorials/advanced/path_tutorial.py: E402
     tutorials/advanced/patheffects_guide.py: E402
     tutorials/advanced/transforms_tutorial.py: E402, E501
@@ -94,14 +93,13 @@ per-file-ignores =
     tutorials/colors/colormap-manipulation.py: E402
     tutorials/intermediate/artists.py: E402
     tutorials/intermediate/constrainedlayout_guide.py: E402
-    tutorials/intermediate/gridspec.py: E402
     tutorials/intermediate/legend_guide.py: E402
     tutorials/intermediate/tight_layout_guide.py: E402
     tutorials/introductory/customizing.py: E501
     tutorials/introductory/images.py: E402, E501
     tutorials/introductory/pyplot.py: E402, E501
     tutorials/introductory/sample_plots.py: E501
-    tutorials/introductory/usage.py: E501
+    tutorials/introductory/quick_start.py: E703
     tutorials/text/annotations.py: E402, E501
     tutorials/text/text_intro.py: E402
     tutorials/text/text_props.py: E501
@@ -120,11 +118,16 @@ per-file-ignores =
     examples/style_sheets/plot_solarizedlight2.py: E501
     examples/subplots_axes_and_figures/demo_constrained_layout.py: E402
     examples/text_labels_and_annotations/custom_legends.py: E402
-    examples/ticks_and_spines/date_concise_formatter.py: E402
+    examples/ticks/date_concise_formatter.py: E402
+    examples/ticks/date_formatters_locators.py: F401
     examples/user_interfaces/embedding_in_gtk3_panzoom_sgskip.py: E402
     examples/user_interfaces/embedding_in_gtk3_sgskip.py: E402
-    examples/user_interfaces/gtk_spreadsheet_sgskip.py: E402
+    examples/user_interfaces/embedding_in_gtk4_panzoom_sgskip.py: E402
+    examples/user_interfaces/embedding_in_gtk4_sgskip.py: E402
+    examples/user_interfaces/gtk3_spreadsheet_sgskip.py: E402
+    examples/user_interfaces/gtk4_spreadsheet_sgskip.py: E402
     examples/user_interfaces/mpl_with_glade3_sgskip.py: E402
-    examples/user_interfaces/pylab_with_gtk_sgskip.py: E402
+    examples/user_interfaces/pylab_with_gtk3_sgskip.py: E402
+    examples/user_interfaces/pylab_with_gtk4_sgskip.py: E402
     examples/user_interfaces/toolmanager_sgskip.py: E402
     examples/userdemo/pgf_preamble_sgskip.py: E402

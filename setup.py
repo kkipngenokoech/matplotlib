@@ -1,6 +1,6 @@
 """
-The matplotlib build options can be modified with a setup.cfg file. See
-setup.cfg.template for more information.
+The Matplotlib build options can be modified with a mplsetup.cfg file. See
+mplsetup.cfg.template for more information.
 """
 
 # NOTE: This file must remain Python 2 compatible for the foreseeable future,
@@ -8,8 +8,8 @@ setup.cfg.template for more information.
 # and/or pip.
 import sys
 
-py_min_version = (3, 7)  # minimal supported python version
-since_mpl_version = (3, 4)  # py_min_version is required since this mpl version
+py_min_version = (3, 8)  # minimal supported python version
+since_mpl_version = (3, 6)  # py_min_version is required since this mpl version
 
 if sys.version_info < py_min_version:
     error = """
@@ -29,19 +29,10 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from setuptools import setup, find_packages, Extension
+from setuptools import setup, find_packages, Distribution, Extension
 import setuptools.command.build_ext
 import setuptools.command.build_py
-import setuptools.command.test
 import setuptools.command.sdist
-
-# The setuptools version of sdist adds a setup.cfg file to the tree.
-# We don't want that, so we simply remove it, and it will fall back to
-# vanilla distutils.
-del setuptools.command.sdist.sdist.make_release_tree
-
-from distutils.errors import CompileError
-from distutils.dist import Distribution
 
 import setupext
 from setupext import print_raw, print_status
@@ -67,15 +58,12 @@ def has_flag(self, flagname):
         f.write('int main (int argc, char **argv) { return 0; }')
         try:
             self.compile([f.name], extra_postargs=[flagname])
-        except CompileError:
+        except Exception as exc:
+            # https://github.com/pypa/setuptools/issues/2698
+            if type(exc).__name__ != "CompileError":
+                raise
             return False
     return True
-
-
-class NoopTestCommand(setuptools.command.test.test):
-    def __init__(self, dist):
-        print("Matplotlib does not support running tests with "
-              "'python setup.py test'. Please run 'pytest'.")
 
 
 class BuildExtraLibraries(setuptools.command.build_ext.build_ext):
@@ -172,12 +160,6 @@ class BuildExtraLibraries(setuptools.command.build_ext.build_ext):
         return env
 
     def build_extensions(self):
-        # Remove the -Wstrict-prototypes option, it's not valid for C++.  Fixed
-        # in Py3.7 as bpo-5755.
-        try:
-            self.compiler.compiler_so.remove('-Wstrict-prototypes')
-        except (ValueError, AttributeError):
-            pass
         if (self.compiler.compiler_type == 'msvc' and
                 os.environ.get('MPL_DISABLE_FH4')):
             # Disable FH4 Exception Handling implementation so that we don't
@@ -217,9 +199,9 @@ def update_matplotlibrc(path):
         idx for idx, line in enumerate(template_lines)
         if "#backend:" in line]
     template_lines[backend_line_idx] = (
-        "#backend: {}".format(setupext.options["backend"])
+        "#backend: {}\n".format(setupext.options["backend"])
         if setupext.options["backend"]
-        else "##backend: Agg")
+        else "##backend: Agg\n")
     path.write_text("".join(template_lines))
 
 
@@ -247,7 +229,7 @@ if not (any('--' + opt in sys.argv
     # Go through all of the packages and figure out which ones we are
     # going to build/install.
     print_raw()
-    print_raw("Edit setup.cfg to change the build options; "
+    print_raw("Edit mplsetup.cfg to change the build options; "
               "suppress output with --quiet.")
     print_raw()
     print_raw("BUILDING MATPLOTLIB")
@@ -275,7 +257,7 @@ if not (any('--' + opt in sys.argv
             package_data.setdefault(key, [])
             package_data[key] = list(set(val + package_data[key]))
 
-setup(  # Finally, pass this all along to distutils to do the heavy lifting.
+setup(  # Finally, pass this all along to setuptools to do the heavy lifting.
     name="matplotlib",
     description="Python plotting package",
     author="John D. Hunter, Michael Droettboom",
@@ -301,9 +283,9 @@ setup(  # Finally, pass this all along to distutils to do the heavy lifting.
         'License :: OSI Approved :: Python Software Foundation License',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
         'Topic :: Scientific/Engineering :: Visualization',
     ],
 
@@ -319,22 +301,25 @@ setup(  # Finally, pass this all along to distutils to do the heavy lifting.
     python_requires='>={}'.format('.'.join(str(n) for n in py_min_version)),
     setup_requires=[
         "certifi>=2020.06.20",
-        "numpy>=1.17",
+        "numpy>=1.19",
         "setuptools_scm>=4",
         "setuptools_scm_git_archive",
     ],
     install_requires=[
         "cycler>=0.10",
+        "fonttools>=4.22.0",
         "kiwisolver>=1.0.1",
-        "numpy>=1.17",
+        "numpy>=1.19",
         "packaging>=20.0",
         "pillow>=6.2.0",
-        "pyparsing>=2.2.1",
+        "pyparsing>=2.2.1,<3.0.0",
         "python-dateutil>=2.7",
     ] + (
-        # Installing from a git checkout.
-        ["setuptools_scm>=4"] if Path(__file__).with_name(".git").exists()
-        else []
+        # Installing from a git checkout that is not producing a wheel.
+        ["setuptools_scm>=4"] if (
+            Path(__file__).with_name(".git").exists() and
+            os.environ.get("CIBUILDWHEEL", "0") != "1"
+        ) else []
     ),
     use_scm_version={
         "version_scheme": "release-branch-semver",
@@ -344,7 +329,6 @@ setup(  # Finally, pass this all along to distutils to do the heavy lifting.
         "fallback_version": "0.0+UNKNOWN",
     },
     cmdclass={
-        "test": NoopTestCommand,
         "build_ext": BuildExtraLibraries,
         "build_py": BuildPy,
         "sdist": Sdist,
