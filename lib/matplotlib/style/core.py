@@ -255,6 +255,32 @@ def reload_library():
     """Reload the style library."""
     global library
     library = update_user_library(_base_library)
+    
+    # Add backward compatibility aliases for deprecated seaborn styles
+    seaborn_aliases = {
+        "seaborn": "seaborn-v0_8",
+        "seaborn-bright": "seaborn-v0_8-bright",
+        "seaborn-colorblind": "seaborn-v0_8-colorblind",
+        "seaborn-dark": "seaborn-v0_8-dark",
+        "seaborn-darkgrid": "seaborn-v0_8-darkgrid",
+        "seaborn-dark-palette": "seaborn-v0_8-dark-palette",
+        "seaborn-deep": "seaborn-v0_8-deep",
+        "seaborn-muted": "seaborn-v0_8-muted",
+        "seaborn-notebook": "seaborn-v0_8-notebook",
+        "seaborn-paper": "seaborn-v0_8-paper",
+        "seaborn-pastel": "seaborn-v0_8-pastel",
+        "seaborn-poster": "seaborn-v0_8-poster",
+        "seaborn-talk": "seaborn-v0_8-talk",
+        "seaborn-ticks": "seaborn-v0_8-ticks",
+        "seaborn-white": "seaborn-v0_8-white",
+        "seaborn-whitegrid": "seaborn-v0_8-whitegrid",
+    }
+    
+    # Add aliases to library if the target style exists
+    for old_name, new_name in seaborn_aliases.items():
+        if new_name in library and old_name not in library:
+            library[old_name] = library[new_name]
+    
     available[:] = sorted(library.keys())
 
 
